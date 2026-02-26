@@ -2,13 +2,15 @@ import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import { UnauthorizedError } from '@modelcontextprotocol/sdk/client/auth.js';
 import OpenAI from 'openai';
 import { v4 as uuidv4 } from 'uuid';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import fs from 'fs';
 import os from 'os';
+import http from 'http';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -16,6 +18,8 @@ const __dirname = dirname(__filename);
 // --- Config -----------------------------------------------------------------
 const PORT = process.env.PORT || 3000;
 const ZOMATO_MCP_URL = 'https://mcp-server.zomato.com/mcp';
+const OAUTH_CALLBACK_PORT = 9876;
+const OAUTH_CALLBACK_URL = `http://localhost:${OAUTH_CALLBACK_PORT}/oauth/callback`;
 
 // --- Express Setup ----------------------------------------------------------
 const app = express();
@@ -31,6 +35,7 @@ let mcpConnected = false;
 let mcpConnecting = false;
 let connectionError = null;
 let authUrl = null;
+let oauthCallbackServer = null;
 
 // Session-based conversation histories
 const sessions = new Map();
@@ -47,10 +52,6 @@ function getSession(sessionId) {
 }
 
 // --- Stale Token Cleanup ----------------------------------------------------
-// mcp-remote stores OAuth lockfiles and tokens in ~/.mcp-auth/
-// Stale files cause "Missing cookies for OTP verification" and similar errors.
-// We clean them before each connection attempt.
-
 function cleanStaleAuthFiles() {
   const authDir = join(os.homedir(), '.mcp-auth');
   try {
@@ -60,35 +61,157 @@ function cleanStaleAuthFiles() {
       const entryPath = join(authDir, entry);
       const stat = fs.statSync(entryPath);
       if (stat.isDirectory()) {
-        // Remove all files inside mcp-remote-* directories
         const files = fs.readdirSync(entryPath);
         for (const file of files) {
-          const filePath = join(entryPath, file);
-          fs.unlinkSync(filePath);
-          console.log(`[CLEANUP] Removed stale auth file: ${filePath}`);
+          fs.unlinkSync(join(entryPath, file));
         }
         fs.rmdirSync(entryPath);
-        console.log(`[CLEANUP] Removed stale auth directory: ${entryPath}`);
+        console.log(`[CLEANUP] Removed stale auth dir: ${entry}`);
       }
     }
   } catch (err) {
-    console.log(`[CLEANUP] Warning: Could not clean auth files: ${err.message}`);
+    console.log(`[CLEANUP] Warning: ${err.message}`);
+  }
+}
+
+// --- In-Memory OAuth Client Provider ----------------------------------------
+// Implements the OAuthClientProvider interface from @modelcontextprotocol/sdk
+// to handle Zomato's OAuth flow on our server side.
+
+class ServerOAuthProvider {
+  constructor() {
+    this._redirectUrl = OAUTH_CALLBACK_URL;
+    this._clientMetadata = {
+      client_name: 'Zomato MCP Chat',
+      redirect_uris: [OAUTH_CALLBACK_URL],
+      grant_types: ['authorization_code', 'refresh_token'],
+      response_types: ['code'],
+      token_endpoint_auth_method: 'client_secret_post'
+    };
+    this._clientInformation = undefined;
+    this._tokens = undefined;
+    this._codeVerifier = undefined;
+    this._authResolve = null;
+  }
+
+  get redirectUrl() {
+    return this._redirectUrl;
+  }
+
+  get clientMetadata() {
+    return this._clientMetadata;
+  }
+
+  clientInformation() {
+    return this._clientInformation;
+  }
+
+  saveClientInformation(info) {
+    this._clientInformation = info;
+  }
+
+  tokens() {
+    return this._tokens;
+  }
+
+  saveTokens(tokens) {
+    this._tokens = tokens;
+    console.log('[AUTH] Tokens saved successfully');
+  }
+
+  redirectToAuthorization(authorizationUrl) {
+    authUrl = authorizationUrl.toString();
+    console.log('[AUTH] Authorization required. URL captured.');
+    console.log('[AUTH] Open this URL in your browser:');
+    console.log(`[AUTH] ${authUrl}`);
+  }
+
+  saveCodeVerifier(verifier) {
+    this._codeVerifier = verifier;
+  }
+
+  codeVerifier() {
+    if (!this._codeVerifier) {
+      throw new Error('No code verifier saved');
+    }
+    return this._codeVerifier;
+  }
+}
+
+// --- OAuth Callback Server --------------------------------------------------
+// Starts a temporary HTTP server to receive the OAuth callback after
+// user completes Zomato login
+
+function startOAuthCallbackServer() {
+  return new Promise((resolve, reject) => {
+    let authCodeResolve;
+    const authCodePromise = new Promise((res) => { authCodeResolve = res; });
+
+    oauthCallbackServer = http.createServer((req, res) => {
+      if (req.url?.startsWith('/oauth/callback')) {
+        const url = new URL(req.url, `http://localhost:${OAUTH_CALLBACK_PORT}`);
+        const code = url.searchParams.get('code');
+        const error = url.searchParams.get('error');
+
+        if (code) {
+          console.log('[AUTH] Authorization code received');
+          res.writeHead(200, { 'Content-Type': 'text/html' });
+          res.end(`
+            <html><body style="background:#0a0a0f;color:#f0f0f5;font-family:Inter,sans-serif;display:flex;justify-content:center;align-items:center;height:100vh;margin:0">
+              <div style="text-align:center">
+                <h1 style="color:#2ecc71">Authorization Successful</h1>
+                <p style="color:#9999bb">You can close this window and return to the chat.</p>
+              </div>
+            </body></html>
+          `);
+          authCodeResolve(code);
+        } else if (error) {
+          console.log(`[AUTH] Authorization error: ${error}`);
+          res.writeHead(400, { 'Content-Type': 'text/html' });
+          res.end(`
+            <html><body style="background:#0a0a0f;color:#f0f0f5;font-family:Inter,sans-serif;display:flex;justify-content:center;align-items:center;height:100vh;margin:0">
+              <div style="text-align:center">
+                <h1 style="color:#e74c3c">Authorization Failed</h1>
+                <p style="color:#9999bb">Error: ${error}</p>
+                <p style="color:#9999bb">Close this window and try again.</p>
+              </div>
+            </body></html>
+          `);
+          authCodeResolve(null);
+        } else {
+          res.writeHead(400);
+          res.end('Bad request');
+        }
+      } else {
+        res.writeHead(404);
+        res.end('Not found');
+      }
+    });
+
+    oauthCallbackServer.listen(OAUTH_CALLBACK_PORT, () => {
+      console.log(`[AUTH] OAuth callback server running at ${OAUTH_CALLBACK_URL}`);
+      resolve({ authCodePromise, authCodeResolve });
+    });
+
+    oauthCallbackServer.on('error', (err) => {
+      console.error('[AUTH] Callback server error:', err.message);
+      reject(err);
+    });
+  });
+}
+
+function stopOAuthCallbackServer() {
+  if (oauthCallbackServer) {
+    oauthCallbackServer.close();
+    oauthCallbackServer = null;
   }
 }
 
 // --- MCP Client Manager -----------------------------------------------------
-
 async function disconnectMCP() {
-  try {
-    if (mcpClient) {
-      await mcpClient.close().catch(() => { });
-    }
-  } catch (e) { /* ignore */ }
-  try {
-    if (mcpTransport) {
-      await mcpTransport.close().catch(() => { });
-    }
-  } catch (e) { /* ignore */ }
+  try { if (mcpClient) await mcpClient.close().catch(() => { }); } catch (e) { }
+  try { if (mcpTransport) await mcpTransport.close().catch(() => { }); } catch (e) { }
+  stopOAuthCallbackServer();
   mcpClient = null;
   mcpTransport = null;
   mcpConnected = false;
@@ -101,7 +224,7 @@ async function connectToMCP() {
   if (mcpConnecting) {
     return {
       success: false,
-      error: 'Connection already in progress. Complete the Zomato login in the browser window, or wait for it to time out and try again.',
+      error: 'Connection already in progress. Complete the Zomato login in the browser, or click Reset and try again.',
       authUrl
     };
   }
@@ -109,7 +232,7 @@ async function connectToMCP() {
     return { success: true, tools: mcpTools.map(t => ({ name: t.name, description: t.description })) };
   }
 
-  // Clean up any previous failed connection and stale auth tokens
+  // Clean up previous state
   await disconnectMCP();
   cleanStaleAuthFiles();
 
@@ -119,31 +242,17 @@ async function connectToMCP() {
 
   try {
     console.log('[MCP] Starting connection to Zomato...');
-    console.log('[MCP] A browser window will open for Zomato OAuth login.');
-    console.log('[MCP] Complete the phone number + OTP login in the browser.');
 
-    // Spawn mcp-remote as a child process - it handles OAuth internally
-    mcpTransport = new StdioClientTransport({
-      command: 'npx',
-      args: ['-y', 'mcp-remote', ZOMATO_MCP_URL, '--allow-http'],
-      env: { ...process.env },
-    });
+    // Create OAuth provider
+    const oauthProvider = new ServerOAuthProvider();
 
-    // Listen for stderr to capture the auth URL and debug info
-    mcpTransport.stderr?.on('data', (data) => {
-      const line = data.toString();
-      // Capture the OAuth authorization URL
-      const urlMatch = line.match(/(https:\/\/mcp-server\.zomato\.com\/authorize\S+)/);
-      if (urlMatch) {
-        authUrl = urlMatch[1];
-        console.log('[AUTH] Authorization URL captured');
-        console.log('[AUTH] If the browser did not open, visit this URL manually:');
-        console.log(`[AUTH] ${authUrl}`);
-      }
-      // Log mcp-remote output for debugging
-      if (line.trim()) {
-        console.log('[mcp-remote]', line.trim());
-      }
+    // Start OAuth callback server
+    const { authCodePromise } = await startOAuthCallbackServer();
+
+    // Create StreamableHTTP transport (direct HTTP, no mcp-remote)
+    const serverUrl = new URL(ZOMATO_MCP_URL);
+    mcpTransport = new StreamableHTTPClientTransport(serverUrl, {
+      authProvider: oauthProvider,
     });
 
     mcpClient = new Client(
@@ -151,18 +260,47 @@ async function connectToMCP() {
       { capabilities: {} }
     );
 
-    // Connect with a generous 5-minute timeout for OAuth
-    const connectPromise = mcpClient.connect(mcpTransport);
-    const timeoutPromise = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error(
-        'Connection timed out. Zomato OAuth login was not completed within 5 minutes. ' +
-        'This often happens when Zomato fails to send the OTP or cookies are missing. ' +
-        'Please try again -- stale tokens have been cleaned up.'
-      )), 300000)
-    );
+    try {
+      // First connection attempt - will trigger OAuth redirect
+      await mcpClient.connect(mcpTransport);
+      console.log('[OK] Connected directly (token was already valid)');
+    } catch (error) {
+      if (error instanceof UnauthorizedError) {
+        console.log('[AUTH] OAuth required, waiting for user to authorize...');
 
-    await Promise.race([connectPromise, timeoutPromise]);
+        // Wait for the auth code from the callback server (5 min timeout)
+        const timeoutPromise = new Promise((_, reject) =>
+          setTimeout(() => reject(new Error(
+            'Authorization timed out after 5 minutes. Please try again.'
+          )), 300000)
+        );
+
+        const authCode = await Promise.race([authCodePromise, timeoutPromise]);
+
+        if (!authCode) {
+          throw new Error('Authorization was rejected or failed. Please try again.');
+        }
+
+        console.log('[AUTH] Finishing auth with code...');
+        await mcpTransport.finishAuth(authCode);
+
+        // Reconnect with authenticated transport
+        console.log('[MCP] Reconnecting with authenticated transport...');
+        mcpClient = new Client(
+          { name: 'zomato-mcp-chat', version: '1.0.0' },
+          { capabilities: {} }
+        );
+        mcpTransport = new StreamableHTTPClientTransport(serverUrl, {
+          authProvider: oauthProvider,
+        });
+        await mcpClient.connect(mcpTransport);
+      } else {
+        throw error;
+      }
+    }
+
     console.log('[OK] MCP transport connected successfully');
+    stopOAuthCallbackServer();
 
     // Discover available tools
     const toolsResult = await mcpClient.listTools();
@@ -184,9 +322,7 @@ async function connectToMCP() {
       success: false,
       error: err.message,
       authUrl: savedAuthUrl,
-      help: 'Stale tokens have been cleaned. Click "Connect to Zomato" to try again. ' +
-        'When the browser opens, enter your Zomato phone number and complete OTP verification. ' +
-        'If Zomato fails to send OTP, wait a minute before retrying.'
+      help: 'Click "Connect to Zomato" to try again. Complete the Zomato login in the browser that opens. If OTP fails, wait a minute before retrying.'
     };
   }
 }
@@ -202,7 +338,6 @@ async function callMCPTool(toolName, args) {
 }
 
 // --- Convert MCP tools to OpenAI function-calling format --------------------
-
 function mcpToolsToOpenAIFunctions(tools) {
   return tools.map(tool => ({
     type: 'function',
@@ -215,7 +350,6 @@ function mcpToolsToOpenAIFunctions(tools) {
 }
 
 // --- OpenAI Chat with Tool Calling ------------------------------------------
-
 async function chatWithOpenAI(sessionId, userMessage) {
   const openaiKey = process.env.OPENAI_API_KEY;
   if (!openaiKey || openaiKey === 'your_openai_api_key_here') {
@@ -241,9 +375,7 @@ If a tool requires location, ask the user for their location/address.
 Always confirm orders before placing them.`
   };
 
-  // Add user message to history
   session.messages.push({ role: 'user', content: userMessage });
-
   const messages = [systemMessage, ...session.messages];
 
   const openaiTools = mcpConnected && mcpTools.length > 0
@@ -264,7 +396,6 @@ Always confirm orders before placing them.`
 
     let assistantMessage = response.choices[0].message;
 
-    // Handle tool calling loop (max 10 iterations)
     let iterations = 0;
     while (assistantMessage.tool_calls && iterations < 10) {
       iterations++;
@@ -279,42 +410,25 @@ Always confirm orders before placing them.`
           toolArgs = {};
         }
 
-        toolCalls.push({
-          id: toolCall.id,
-          name: toolName,
-          args: toolArgs,
-          status: 'calling'
-        });
+        toolCalls.push({ id: toolCall.id, name: toolName, args: toolArgs, status: 'calling' });
 
         try {
           const mcpResult = await callMCPTool(toolName, toolArgs);
           let resultText = '';
           if (mcpResult.content) {
-            resultText = mcpResult.content
-              .map(c => c.text || JSON.stringify(c))
-              .join('\n');
+            resultText = mcpResult.content.map(c => c.text || JSON.stringify(c)).join('\n');
           } else {
             resultText = JSON.stringify(mcpResult);
           }
 
           toolCalls[toolCalls.length - 1].status = 'success';
           toolCalls[toolCalls.length - 1].result = resultText.substring(0, 500);
-
-          session.messages.push({
-            role: 'tool',
-            tool_call_id: toolCall.id,
-            content: resultText
-          });
+          session.messages.push({ role: 'tool', tool_call_id: toolCall.id, content: resultText });
         } catch (err) {
           console.error(`[ERROR] Tool ${toolName}:`, err.message);
           toolCalls[toolCalls.length - 1].status = 'error';
           toolCalls[toolCalls.length - 1].error = err.message;
-
-          session.messages.push({
-            role: 'tool',
-            tool_call_id: toolCall.id,
-            content: `Error calling tool: ${err.message}`
-          });
+          session.messages.push({ role: 'tool', tool_call_id: toolCall.id, content: `Error: ${err.message}` });
         }
       }
 
@@ -333,11 +447,7 @@ Always confirm orders before placing them.`
     const finalContent = assistantMessage.content || 'I processed your request but did not get a text response.';
     session.messages.push({ role: 'assistant', content: finalContent });
 
-    return {
-      response: finalContent,
-      toolCalls,
-      sessionId
-    };
+    return { response: finalContent, toolCalls, sessionId };
   } catch (err) {
     console.error('[ERROR] OpenAI:', err.message);
     throw err;
@@ -346,7 +456,6 @@ Always confirm orders before placing them.`
 
 // --- API Routes -------------------------------------------------------------
 
-// Check MCP connection status
 app.get('/api/status', (req, res) => {
   res.json({
     connected: mcpConnected,
@@ -358,7 +467,6 @@ app.get('/api/status', (req, res) => {
   });
 });
 
-// Connect to Zomato MCP
 app.post('/api/connect', async (req, res) => {
   try {
     const result = await connectToMCP();
@@ -368,19 +476,17 @@ app.post('/api/connect', async (req, res) => {
   }
 });
 
-// Disconnect from Zomato MCP (for clean retry)
 app.post('/api/disconnect', async (req, res) => {
   try {
     await disconnectMCP();
     cleanStaleAuthFiles();
     connectionError = null;
-    res.json({ success: true, message: 'Disconnected and cleared stale auth tokens.' });
+    res.json({ success: true, message: 'Disconnected and cleared auth state.' });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
 });
 
-// List available tools
 app.get('/api/tools', (req, res) => {
   res.json({
     connected: mcpConnected,
@@ -392,14 +498,12 @@ app.get('/api/tools', (req, res) => {
   });
 });
 
-// Chat endpoint
 app.post('/api/chat', async (req, res) => {
   try {
     const { message, sessionId } = req.body;
     if (!message) {
       return res.status(400).json({ error: 'Message is required' });
     }
-
     const sid = sessionId || uuidv4();
     const result = await chatWithOpenAI(sid, message);
     res.json(result);
@@ -409,7 +513,6 @@ app.post('/api/chat', async (req, res) => {
   }
 });
 
-// Create new session
 app.post('/api/session', (req, res) => {
   const sessionId = uuidv4();
   getSession(sessionId);
@@ -420,5 +523,6 @@ app.post('/api/session', (req, res) => {
 app.listen(PORT, () => {
   console.log(`\n[SERVER] Zomato MCP Chat Server running at http://localhost:${PORT}`);
   console.log(`[MCP] Zomato MCP URL: ${ZOMATO_MCP_URL}`);
+  console.log(`[AUTH] OAuth callback will be at: ${OAUTH_CALLBACK_URL}`);
   console.log(`\nOpen http://localhost:${PORT} in your browser to start chatting!\n`);
 });
