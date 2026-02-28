@@ -41,6 +41,4 @@ Once connected, the following Zomato capabilities are available:
 
 This project is for educational and testing purposes only. Zomato's MCP server disclaimer states they are not allowing third-party apps built on top of Zomato MCP at this time.
 
----
-
 # Sharan G S
