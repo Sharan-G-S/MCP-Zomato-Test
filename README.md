@@ -2,6 +2,8 @@
 
 > AI-powered food ordering assistant that connects to Zomato's real API via the Model Context Protocol. Search, order, and pay — all through conversation.
 
+# Sharan G S
+
 ##  Features
 
 -  **GPS Location Detection** - Automatic location detection for nearby restaurants
