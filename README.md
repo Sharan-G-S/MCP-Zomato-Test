@@ -2,18 +2,18 @@
 
 > AI-powered food ordering assistant that connects to Zomato's real API via the Model Context Protocol. Search, order, and pay — all through conversation.
 
-## ✨ Features
+##  Features
 
-- 🎯 **GPS Location Detection** - Automatic location detection for nearby restaurants
-- 🔍 **Smart Restaurant Search** - Natural language search with ratings, prices, delivery time
-- 🍽️ **Visual Menu Browsing** - Large dish images, bestseller badges, veg/non-veg indicators
-- 🛒 **Intelligent Cart Management** - Context-aware AI that remembers your restaurant and items
-- 💰 **Automatic Offer Discovery** - Finds and applies best discounts automatically
-- 📍 **Saved Address Management** - Uses your Zomato saved addresses for delivery
-- 💳 **UPI Payment QR Codes** - 600x600px QR codes for easy mobile scanning
-- 🎨 **Zomato-Style UI** - Hero images, ratings, reviews, glassmorphism design
-- 💬 **Conversational AI** - Natural chat interface with GPT-4o
-- 📱 **Fully Responsive** - Works on desktop, tablet, and mobile
+-  **GPS Location Detection** - Automatic location detection for nearby restaurants
+-  **Smart Restaurant Search** - Natural language search with ratings, prices, delivery time
+-  **Visual Menu Browsing** - Large dish images, bestseller badges, veg/non-veg indicators
+-  **Intelligent Cart Management** - Context-aware AI that remembers your restaurant and items
+-  **Automatic Offer Discovery** - Finds and applies best discounts automatically
+-  **Saved Address Management** - Uses your Zomato saved addresses for delivery
+-  **UPI Payment QR Codes** - 600x600px QR codes for easy mobile scanning
+-  **Zomato-Style UI** - Hero images, ratings, reviews, glassmorphism design
+-  **Conversational AI** - Natural chat interface with GPT-4o
+-  **Fully Responsive** - Works on desktop, tablet, and mobile
 
 ---
 
