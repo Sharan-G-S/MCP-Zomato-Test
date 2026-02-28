@@ -233,4 +233,5 @@ For **testing purposes only**. Per Zomato: *"Third party apps on Zomato MCP are 
 
 **Built with** Node.js · Express · OpenAI GPT-4o · MCP Protocol · Zomato MCP Server
 
-**Author:** Sharan G S
+
+# Sharan G S
