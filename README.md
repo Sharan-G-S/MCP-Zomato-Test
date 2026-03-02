@@ -223,13 +223,11 @@ npm test               # Run tests (if configured)
 - **Reset chat history**: Delete `chat_history.json` file and restart server
 - **Corrupted data**: Backup and delete `chat_history.json`, it will regenerate automatically
 
----
 
 ## Disclaimer
 
 For **testing purposes only**. Per Zomato: *"Third party apps on Zomato MCP are not allowed due to security and legal considerations."*
 
----
 
 **Built with** Node.js · Express · OpenAI GPT-4o · MCP Protocol · Zomato MCP Server
 
