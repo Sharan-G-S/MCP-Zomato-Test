@@ -188,7 +188,6 @@ npm run dev            # Start with auto-restart (if nodemon installed)
 npm test               # Run tests (if configured)
 ```
 
----
 
 ## Key Design Decisions
 
