@@ -1,12 +1,13 @@
 {
   "name": "mcp-zomato",
-  "version": "1.0.0",
-  "description": "Zomato MCP Chat Interface - AI-powered food ordering via MCP",
+  "version": "2.0.0",
+  "description": "Zomato MCP App - AI-powered food ordering with native MCP Apps architecture",
   "main": "server.js",
   "type": "module",
   "scripts": {
     "start": "node server.js",
-    "dev": "node server.js"
+    "dev": "node server.js",
+    "build:client": "npm run build:client"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.1",
@@ -14,6 +15,13 @@
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
     "openai": "^4.77.0",
-    "uuid": "^11.1.0"
+    "uuid": "^11.1.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.7"
+  },
+  "engines": {
+    "node": ">=18.0.0"
   }
 }

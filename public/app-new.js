@@ -705,15 +705,12 @@ function handleSubmit(e) {
 }
 
 function sendSuggestion(text) {
-    console.log('🔵 sendSuggestion called with:', text);
     messageInput.value = text;
     sendMessage();
 }
 
 async function sendMessage() {
-    console.log('🟢 sendMessage CALLED - Starting...');
     const message = messageInput.value.trim();
-    console.log('🟢 Message:', message, 'isSending:', isSending);
     if (!message || isSending) return;
 
     if (emptyState) emptyState.style.display = 'none';
@@ -727,15 +724,13 @@ async function sendMessage() {
     const typingStartTime = Date.now();
     const MIN_LOADING_TIME = 1200; // Minimum 1200ms to ensure user always sees the indicator
     
-    console.log('🔄 Loading indicators shown:', { typingId, skeletonId: 'pending' });
-    
     // Always show loading skeleton for visual feedback
     const skeletonId = showSkeletonCard('search', Date.now());
 
     try {
         // Add timeout to prevent hanging indefinitely
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 90000); // 90 second timeout
+        const timeoutId = setTimeout(() => controller.abort(), 180000); // 180 second timeout (3 minutes)
 
         const res = await fetch('/api/chat', {
             method: 'POST',
@@ -782,11 +777,8 @@ async function sendMessage() {
         const elapsedTime = Date.now() - typingStartTime;
         const remainingTime = Math.max(0, MIN_LOADING_TIME - elapsedTime);
         
-        console.log('⏱️ Loading timing:', { elapsedTime, remainingTime, total: elapsedTime + remainingTime });
-        
         await new Promise(resolve => setTimeout(resolve, remainingTime));
         
-        console.log('✅ Removing loading indicators after response is rendered');
         removeTypingIndicator(typingId);
         removeSkeletonCard(skeletonId);
     } catch (err) {
@@ -802,11 +794,8 @@ async function sendMessage() {
         const elapsedTime = Date.now() - typingStartTime;
         const remainingTime = Math.max(0, MIN_LOADING_TIME - elapsedTime);
         
-        console.log('❌ Error, but showing loading for:', { elapsedTime, remainingTime });
-        
         await new Promise(resolve => setTimeout(resolve, remainingTime));
         
-        console.log('✅ Removing loading indicators (after error shown)');
         removeTypingIndicator(typingId);
         removeSkeletonCard(skeletonId);
     }

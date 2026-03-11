@@ -15,7 +15,15 @@ const PORT = process.env.PORT || 3000;
 const app = express();
 app.use(cors());
 app.use(express.json());
-app.use(express.static(join(__dirname, 'public')));
+
+// Disable caching for all static files
+app.use(express.static(join(__dirname, 'public'), {
+  setHeaders: (res) => {
+    res.set('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+    res.set('Expires', '0');
+    res.set('Pragma', 'no-cache');
+  }
+}));
 
 // --- Routes ---
 app.use(apiRouter);
