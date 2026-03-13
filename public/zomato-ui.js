@@ -10,6 +10,10 @@ class ZomatoUI {
         this.cart = [];
     }
 
+    jsArg(value) {
+        return JSON.stringify(String(value ?? ''));
+    }
+
     /**
      * Render restaurant cards from search results
      */
@@ -63,7 +67,7 @@ class ZomatoUI {
                 <div class="restaurant-image" style="background-image: url('${image || 'https://via.placeholder.com/400x250?text=Restaurant'}')">
                     ${!isOpen ? '<div class="closed-badge">CLOSED</div>' : ''}
                     ${offerText ? `<div class="offer-badge">🎁 ${offerText}</div>` : ''}
-                    <button class="favorite-btn" onclick="toggleFavorite('${id}')">
+                    <button class="favorite-btn" onclick='toggleFavorite(${this.jsArg(id)})'>
                         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2">
                             <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
                         </svg>
@@ -95,7 +99,7 @@ class ZomatoUI {
                             <span>₹${costForTwo} for two</span>
                         </div>
                     </div>
-                    <button class="view-menu-btn" onclick="viewRestaurantMenu('${id}', '${name}')">
+                    <button class="view-menu-btn" onclick='viewRestaurantMenu(${this.jsArg(id)}, ${this.jsArg(name)})'>
                         View Menu
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <line x1="5" y1="12" x2="19" y2="12"/>
@@ -204,12 +208,12 @@ class ZomatoUI {
                 ${image ? `
                     <div class="item-image-container">
                         <img src="${image}" alt="${name}" class="item-image" />
-                        <button class="add-btn" onclick="addToCart('${id}', '${name}', ${price})">
+                        <button class="add-btn" onclick='addToCart(${this.jsArg(id)}, ${this.jsArg(name)}, ${Number(price) || 0})'>
                             ADD
                         </button>
                     </div>
                 ` : `
-                    <button class="add-btn simple" onclick="addToCart('${id}', '${name}', ${price})">
+                    <button class="add-btn simple" onclick='addToCart(${this.jsArg(id)}, ${this.jsArg(name)}, ${Number(price) || 0})'>
                         ADD +
                     </button>
                 `}
@@ -256,7 +260,7 @@ class ZomatoUI {
                     ${items.map(item => this.renderCartItem(item)).join('')}
                 </div>
                 <div class="add-more-items">
-                    <button class="add-more-btn" onclick="backToMenu()">
+                    <button class="add-more-btn" onclick="addMoreItems()">
                         + Add more items
                     </button>
                 </div>
@@ -305,9 +309,9 @@ class ZomatoUI {
                     <h5>${name}</h5>
                     ${customizations.length > 0 ? `<p class="customizations">${customizations.join(', ')}</p>` : ''}
                     <div class="quantity-control">
-                        <button class="qty-btn" onclick="updateQuantity('${id}', ${quantity - 1})">−</button>
+                        <button class="qty-btn" onclick='updateQuantity(${this.jsArg(id)}, -1, ${this.jsArg(name)})'>−</button>
                         <span class="quantity">${quantity}</span>
-                        <button class="qty-btn" onclick="updateQuantity('${id}', ${quantity + 1})">+</button>
+                        <button class="qty-btn" onclick='updateQuantity(${this.jsArg(id)}, 1, ${this.jsArg(name)})'>+</button>
                     </div>
                 </div>
                 <div class="cart-item-price">₹${price * quantity}</div>

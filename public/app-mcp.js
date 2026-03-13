@@ -659,13 +659,6 @@ function renderZomatoUI(structuredData) {
     
     return '';
 }
-            </div>
-        `;
-    }
-    
-    messagesArea.appendChild(messageDiv);
-    scrollToBottom();
-}
 
 function renderToolCalls(toolCalls) {
     if (!toolCalls || toolCalls.length === 0) return '';
@@ -1053,6 +1046,12 @@ document.head.appendChild(style);
 // ZOMATO UI INTERACTIVE HANDLERS
 // =============================================================
 
+function safeSendPresetMessage(message) {
+    if (!message || !messageInput) return;
+    messageInput.value = message;
+    sendMessage(message);
+}
+
 /**
  * Filter restaurants by criteria
  */
@@ -1178,25 +1177,33 @@ window.filterMenu = function(filter) {
 /**
  * Add item to cart
  */
-window.addToCart = function(itemId, itemName) {
-    console.log('[Cart] Add item:', itemId, itemName);
+window.addToCart = function(itemId, itemName, price = 0) {
+    console.log('[Cart] Add item:', itemId, itemName, price);
     
     // Update cart in ZomatoUI
     if (window.ZomatoUI) {
-        window.ZomatoUI.cart.push({
-            id: itemId,
-            name: itemName,
-            quantity: 1
-        });
+        const existing = window.ZomatoUI.cart.find(i => i.id === itemId);
+        if (existing) {
+            existing.quantity += 1;
+        } else {
+            window.ZomatoUI.cart.push({
+                id: itemId,
+                name: itemName,
+                price,
+                quantity: 1
+            });
+        }
         
         // Update cart count badge
         const cartCount = document.querySelector('.cart-count');
         if (cartCount) {
-            cartCount.textContent = window.ZomatoUI.cart.length;
+            const totalItems = window.ZomatoUI.cart.reduce((sum, item) => sum + (item.quantity || 0), 0);
+            cartCount.textContent = totalItems;
         }
     }
     
     showNotification(`${itemName} added to cart! 🛒`, 'success');
+    safeSendPresetMessage(`Add ${itemName} to my cart`);
 };
 
 /**
@@ -1204,22 +1211,21 @@ window.addToCart = function(itemId, itemName) {
  */
 window.addMoreItems = function() {
     console.log('[Cart] Add more items');
-    if (messageInput) {
-        messageInput.value = 'Show me the menu again';
-        sendMessage('Show me the menu again');
-    }
+    safeSendPresetMessage('Show me the menu again');
 };
+
+window.backToMenu = window.addMoreItems;
 
 /**
  * Update item quantity in cart
  */
-window.updateQuantity = function(itemId, change) {
-    console.log('[Cart] Update quantity:', itemId, change);
+window.updateQuantity = function(itemId, delta, itemName = 'this item') {
+    console.log('[Cart] Update quantity:', itemId, delta, itemName);
     
     if (window.ZomatoUI) {
         const item = window.ZomatoUI.cart.find(i => i.id === itemId);
         if (item) {
-            item.quantity = Math.max(0, item.quantity + change);
+            item.quantity = Math.max(0, (item.quantity || 0) + delta);
             
             if (item.quantity === 0) {
                 const index = window.ZomatoUI.cart.indexOf(item);
@@ -1228,11 +1234,11 @@ window.updateQuantity = function(itemId, change) {
             }
         }
     }
-    
-    // Send message to update cart view
-    if (messageInput) {
-        messageInput.value = 'Show me my updated cart';
-        sendMessage('Show me my updated cart');
+
+    if (delta > 0) {
+        safeSendPresetMessage(`Increase quantity of ${itemName} by 1 in my cart`);
+    } else {
+        safeSendPresetMessage(`Decrease quantity of ${itemName} by 1 in my cart`);
     }
 };
 
@@ -1241,17 +1247,8 @@ window.updateQuantity = function(itemId, change) {
  */
 window.proceedToCheckout = function() {
     console.log('[Cart] Proceed to checkout');
-    
-    if (!window.ZomatoUI || window.ZomatoUI.cart.length === 0) {
-        showNotification('Your cart is empty', 'error');
-        return;
-    }
-    
-    const message = 'Place my order and proceed to checkout';
-    if (messageInput) {
-        messageInput.value = message;
-        sendMessage(message);
-    }
+
+    safeSendPresetMessage('Proceed to payment and checkout with my current cart');
 };
 
 /**
@@ -1259,11 +1256,7 @@ window.proceedToCheckout = function() {
  */
 window.trackOrder = function(orderId) {
     console.log('[Order] Track order:', orderId);
-    const message = `Track my order ${orderId}`;
-    if (messageInput) {
-        messageInput.value = message;
-        sendMessage(message);
-    }
+    safeSendPresetMessage(`Track my order ${orderId}`);
 };
 
 console.log('[Zomato UI Handlers] Interactive handlers loaded');
