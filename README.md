@@ -4,28 +4,28 @@
 
 **Created by:** Sharan G S
 
-## 🎯 What's New in v2.0
+##  What's New in v2.0
 
 ### Native MCP Apps Architecture
 This version implements the official [MCP Apps architecture](https://modelcontextprotocol.io/extensions/apps/overview) with:
 
-- ✅ **Browser-based MCP Client** - Direct connection from browser to MCP servers
-- ✅ **Real-time Streaming** - Live updates and tool execution feedback
-- ✅ **Enhanced UI/UX** - Zomato-style interface with glassmorphism design
-- ✅ **Progressive Connection** - Smart connection handling with retry logic
-- ✅ **Tool Discovery** - Automatic discovery and visualization of MCP tools
-- ✅ **Event-driven Architecture** - Reactive UI updates based on MCP events
-- ✅ **Improved Error Handling** - User-friendly error messages and recovery
+-  **Browser-based MCP Client** - Direct connection from browser to MCP servers
+-  **Real-time Streaming** - Live updates and tool execution feedback
+-  **Enhanced UI/UX** - Zomato-style interface with glassmorphism design
+-  **Progressive Connection** - Smart connection handling with retry logic
+-  **Tool Discovery** - Automatic discovery and visualization of MCP tools
+-  **Event-driven Architecture** - Reactive UI updates based on MCP events
+-  **Improved Error Handling** - User-friendly error messages and recovery
 
 ### Interactive Zomato UI Components
 Complete Zomato-style interface with:
 
-- ✅ **Restaurant Cards** - Grid layout with images, ratings, offers, and favorites
-- ✅ **Menu View** - Categories, filters (veg/non-veg/bestseller), item images
-- ✅ **Shopping Cart** - Quantity controls, bill breakdown, checkout flow
-- ✅ **Order Confirmation** - Success animation, timeline tracker, order summary
-- ✅ **Filter System** - Client-side filtering for instant results
-- ✅ **Mobile Responsive** - Optimized for all screen sizes
+-  **Restaurant Cards** - Grid layout with images, ratings, offers, and favorites
+-  **Menu View** - Categories, filters (veg/non-veg/bestseller), item images
+-  **Shopping Cart** - Quantity controls, bill breakdown, checkout flow
+-  **Order Confirmation** - Success animation, timeline tracker, order summary
+-  **Filter System** - Client-side filtering for instant results
+-  **Mobile Responsive** - Optimized for all screen sizes
 
 ##  Features
 
@@ -151,7 +151,7 @@ The browser can also call MCP tools directly:
 
 ---
 
-## 🧠 Why OpenAI API Key is Essential
+##  Why OpenAI API Key is Essential
 
 **GPT-4o is the "brain"** that understands your requests and decides:
 - Which Zomato MCP tools to call (search, menu, cart, order, etc.)
@@ -171,7 +171,7 @@ The browser can also call MCP tools directly:
 
 ---
 
-## 📦 Installation
+##  Installation
 
 ### Prerequisites
 - Node.js 18+
@@ -195,7 +195,7 @@ echo "PORT=3000" >> .env
 
 ---
 
-## 🚀 Usage
+##  Usage
 
 ### Start the Server
 
@@ -245,7 +245,7 @@ AI: [Calls place_order] Order placed successfully!
 
 ---
 
-## 🛠️ MCP Apps Implementation Details
+##  MCP Apps Implementation Details
 
 ### Browser MCP Client (`public/mcp-client.js`)
 
@@ -305,7 +305,7 @@ async function handleActionClick(action) {
 
 ---
 
-## 🎨 UI/UX Enhancements
+##  UI/UX Enhancements
 
 ### Glassmorphism Design
 - Frosted glass surfaces with backdrop blur
@@ -334,13 +334,13 @@ async function handleActionClick(action) {
 **The OpenAI API Key powers ALL the intelligent features of this application.** Without it, there is no AI assistant!
 
 ### What the API Key Enables:
-- ✅ **Natural Language Understanding** - Converts your casual requests like "I want cheap biryani nearby" into structured tool calls
-- ✅ **Context Awareness** - Remembers the entire conversation so when you say "add the cheapest one", it knows which restaurant's menu you're viewing
-- ✅ **Smart Decision Making** - Decides which Zomato tools to call based on your intent (search, menu, cart, checkout)
-- ✅ **Tool Call Chaining** - Executes multiple operations in sequence (e.g., search → show menu → add to cart) from a single message
-- ✅ **Error Recovery** - Automatically finds alternative restaurants if one is offline, expands search if no results found
-- ✅ **Formatted Responses** - Generates beautiful tables, comparison charts, and action buttons for easy interaction
-- ✅ **Offer Optimization** - Analyzes available discounts and recommends the best savings
+-  **Natural Language Understanding** - Converts your casual requests like "I want cheap biryani nearby" into structured tool calls
+-  **Context Awareness** - Remembers the entire conversation so when you say "add the cheapest one", it knows which restaurant's menu you're viewing
+-  **Smart Decision Making** - Decides which Zomato tools to call based on your intent (search, menu, cart, checkout)
+-  **Tool Call Chaining** - Executes multiple operations in sequence (e.g., search → show menu → add to cart) from a single message
+-  **Error Recovery** - Automatically finds alternative restaurants if one is offline, expands search if no results found
+-  **Formatted Responses** - Generates beautiful tables, comparison charts, and action buttons for easy interaction
+-  **Offer Optimization** - Analyzes available discounts and recommends the best savings
 
 ### How It Works:
 1. Your message goes to **GPT-4o** (via OpenAI API)
@@ -416,7 +416,7 @@ cd MCP-Zomato
 # 2. Install dependencies
 npm install
 
-# 3. ✅ YOUR API KEY IS ALREADY CONFIGURED!
+# 3.  YOUR API KEY IS ALREADY CONFIGURED!
 # The .env file contains your OpenAI API key
 # You can verify by checking: cat .env
 
