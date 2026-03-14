@@ -794,6 +794,7 @@ body::before {
     color: var(--text-secondary);
     font-size: 13px;
     position: relative;
+    user-select: none;
 }
 
 .chat-item:hover {
@@ -820,11 +821,16 @@ body::before {
     border: none;
     color: var(--text-muted);
     cursor: pointer;
-    padding: 4px;
+    padding: 4px 6px;
     border-radius: 4px;
     transition: all var(--transition);
     display: flex;
     align-items: center;
+    justify-content: center;
+    font-size: 18px;
+    line-height: 1;
+    min-width: 24px;
+    min-height: 24px;
 }
 
 .chat-item:hover .delete-chat {

@@ -36,7 +36,13 @@ let userLocation = null;
 let selectedDeliveryAddress = null;
 let selectedPaymentMethod = 'UPI';
 let connectionAttempts = 0;
+let savedAddresses = [];
+let globalLoadingCount = 0;
 const MAX_CONNECTION_ATTEMPTS = 3;
+const STORAGE_KEYS = {
+    sessionId: 'zomato-mcp-session-id',
+    activeChatId: 'zomato-mcp-active-chat-id'
+};
 
 // --- DOM Elements ---
 const landingPage = document.getElementById('landingPage');
@@ -55,6 +61,7 @@ const chatList = document.getElementById('chatList');
 const sidebar = document.getElementById('sidebar');
 const contextChips = document.getElementById('contextChips');
 const stepTracker = document.getElementById('stepTracker');
+const addressPanel = document.getElementById('addressPanel');
 
 // =============================================================
 // MCP CLIENT EVENT HANDLERS
@@ -67,6 +74,7 @@ mcpClient.on('connect', (data) => {
     updateConnectionUI();
     showToolsList();
     showNotification('Connected to Zomato MCP! 🎉', 'success');
+    syncSavedAddressesFromMCP();
 });
 
 mcpClient.on('disconnect', () => {
@@ -137,10 +145,12 @@ async function quickSearch(category) {
 
 function detectUserLocation() {
     console.log('[GPS] Requesting user location...');
+    setGlobalLoading(true, 'Detecting your location...');
     
     if (!navigator.geolocation) {
         console.error('[GPS] Geolocation not supported');
         showNotification('Geolocation is not supported by your browser', 'error');
+        setGlobalLoading(false);
         return;
     }
     
@@ -177,6 +187,7 @@ function detectUserLocation() {
             
             updateLocationChip();
             showNotification('Location detected successfully! 📍', 'success');
+            setGlobalLoading(false);
         },
         (error) => {
             console.error('[GPS] Error:', error.message);
@@ -202,6 +213,7 @@ function detectUserLocation() {
             }
             
             showNotification(errorMsg, 'error');
+            setGlobalLoading(false);
         },
         {
             enableHighAccuracy: true,
@@ -227,6 +239,7 @@ async function connectToMCPServer() {
     }
     
     connectionAttempts++;
+    setGlobalLoading(true, 'Connecting to Zomato MCP...');
     
     try {
         console.log('[MCP App] Connecting to Zomato MCP server...');
@@ -242,6 +255,8 @@ async function connectToMCPServer() {
         showNotification(`Connection failed: ${error.message}`, 'error');
         isConnected = false;
         updateConnectionUI();
+    } finally {
+        setGlobalLoading(false);
     }
 }
 
@@ -276,6 +291,7 @@ function startConnectionPolling() {
                 updateConnectionUI();
                 showToolsList();
                 showNotification('Connected to Zomato MCP! 🎉', 'success');
+                await syncSavedAddressesFromMCP();
             } else if (!status.connected && status.error && !status.connecting) {
                 clearInterval(connectPollTimer);
                 connectPollTimer = null;
@@ -410,6 +426,7 @@ async function sendMessage(message) {
     }
     
     isSending = true;
+    setGlobalLoading(true, 'Processing your request...');
     
     // Add user message to UI
     addMessageToUI('user', message);
@@ -459,6 +476,7 @@ async function sendMessage(message) {
         showNotification('Failed to send message', 'error');
     } finally {
         isSending = false;
+        setGlobalLoading(false);
     }
 }
 
@@ -511,6 +529,22 @@ function extractStructuredData(toolCalls) {
             type: 'order',
             data: checkoutTool.data
         };
+    }
+
+    const addressTool = toolCalls.find(tc =>
+        tc.name === 'get_saved_addresses_for_user' && tc.status === 'success'
+    );
+    if (addressTool) {
+        const addresses = extractAddressesFromToolResult(addressTool.data, addressTool.result);
+        if (addresses.length > 0) {
+            savedAddresses = addresses;
+            renderAddressPanel();
+            renderContextChips();
+            return {
+                type: 'addresses',
+                data: { addresses }
+            };
+        }
     }
     
     return null;
@@ -630,6 +664,10 @@ function renderZomatoUI(structuredData) {
     if (type === 'order') {
         return zomato.renderOrderConfirmation(data);
     }
+
+    if (type === 'addresses') {
+        return zomato.renderSavedAddresses(data.addresses || []);
+    }
     
     // Auto-detect data type if type is 'auto'
     if (type === 'auto') {
@@ -654,6 +692,10 @@ function renderZomatoUI(structuredData) {
         // Order confirmation
         if (data.order || data.orderId) {
             return zomato.renderOrderConfirmation(data);
+        }
+
+        if (Array.isArray(data.addresses)) {
+            return zomato.renderSavedAddresses(data.addresses);
         }
     }
     
@@ -793,12 +835,135 @@ function showNotification(message, type = 'info') {
 }
 
 function updateLocationChip() {
-    if (!contextChips || !userLocation) return;
-    
-    const locationChip = contextChips.querySelector('.context-chip.location');
-    if (locationChip) {
-        locationChip.querySelector('.chip-text').textContent = userLocation.label;
-        locationChip.style.display = 'flex';
+    renderContextChips();
+}
+
+function renderContextChips() {
+    if (!contextChips) return;
+
+    const chips = [];
+    if (userLocation?.label) {
+        chips.push(`
+            <button class="context-chip location" onclick="sendSuggestion('Find best restaurants near my current location')">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/>
+                    <circle cx="12" cy="10" r="3"/>
+                </svg>
+                <span class="chip-text">${escapeHtml(userLocation.label)}</span>
+            </button>
+        `);
+    }
+
+    if (savedAddresses.length > 0) {
+        chips.push(`
+            <button class="context-chip address" onclick="sendSuggestion('Use my saved home address for delivery')">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M3 9.5L12 3l9 6.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1V9.5z"/>
+                </svg>
+                <span class="chip-text">${savedAddresses.length} Saved Address${savedAddresses.length > 1 ? 'es' : ''}</span>
+            </button>
+        `);
+    }
+
+    contextChips.innerHTML = chips.join('');
+}
+
+function setGlobalLoading(isLoading, label = 'Loading...') {
+    const overlay = document.getElementById('globalLoadingOverlay');
+    if (!overlay) return;
+
+    if (isLoading) {
+        globalLoadingCount += 1;
+        overlay.classList.add('visible');
+        overlay.setAttribute('aria-busy', 'true');
+        const labelEl = overlay.querySelector('.loader-label');
+        if (labelEl && label) {
+            labelEl.textContent = label;
+        }
+        return;
+    }
+
+    globalLoadingCount = Math.max(0, globalLoadingCount - 1);
+    if (globalLoadingCount === 0) {
+        overlay.classList.remove('visible');
+        overlay.setAttribute('aria-busy', 'false');
+    }
+}
+
+function extractAddressesFromToolResult(data, fallbackText = '') {
+    if (data && Array.isArray(data.addresses)) {
+        return data.addresses;
+    }
+
+    if (data?.result?.addresses && Array.isArray(data.result.addresses)) {
+        return data.result.addresses;
+    }
+
+    if (typeof fallbackText === 'string' && fallbackText.trim().startsWith('{')) {
+        try {
+            const parsed = JSON.parse(fallbackText);
+            return parsed.addresses || [];
+        } catch (err) {
+            return [];
+        }
+    }
+
+    return [];
+}
+
+function normalizeAddress(address, index) {
+    const id = address.address_id || address.id || `address-${index + 1}`;
+    const label = address.location_name || address.name || address.address || `Address ${index + 1}`;
+    return { id: String(id), label: String(label) };
+}
+
+function renderAddressPanel() {
+    if (!addressPanel) return;
+
+    if (!savedAddresses.length) {
+        addressPanel.innerHTML = '';
+        addressPanel.style.display = 'none';
+        return;
+    }
+
+    const cards = savedAddresses
+        .map((addr, idx) => normalizeAddress(addr, idx))
+        .map((addr, idx) => `
+            <article class="address-card" role="button" tabindex="0" onclick="selectSavedAddressByIndex(${idx})" onkeydown="if(event.key==='Enter'){selectSavedAddressByIndex(${idx})}">
+                <div class="address-card-title">Address ${idx + 1}</div>
+                <div class="address-card-text">${escapeHtml(addr.label)}</div>
+                <button class="address-use-btn" onclick="event.stopPropagation(); selectSavedAddressByIndex(${idx})">Use This</button>
+            </article>
+        `)
+        .join('');
+
+    addressPanel.style.display = 'grid';
+    addressPanel.innerHTML = `
+        <div class="address-panel-header">
+            <h4>Saved Addresses from Zomato MCP</h4>
+            <button class="address-refresh-btn" onclick="refreshSavedAddresses()">Refresh</button>
+        </div>
+        <div class="address-grid">${cards}</div>
+    `;
+}
+
+async function syncSavedAddressesFromMCP(force = false) {
+    if (!isConnected) return;
+    if (!force && savedAddresses.length > 0) return;
+
+    setGlobalLoading(true, 'Fetching your saved addresses...');
+    try {
+        const result = await mcpClient.callTool('get_saved_addresses_for_user', {});
+        const addresses = extractAddressesFromToolResult(result?.structuredContent?.result || result, result?.content?.[0]?.text || '');
+        if (addresses.length > 0) {
+            savedAddresses = addresses;
+            renderAddressPanel();
+            renderContextChips();
+        }
+    } catch (error) {
+        console.warn('[MCP App] Failed to sync addresses:', error.message);
+    } finally {
+        setGlobalLoading(false);
     }
 }
 
@@ -852,49 +1017,153 @@ function escapeHtml(text) {
     return div.innerHTML;
 }
 
+function persistSessionState() {
+    if (sessionId) localStorage.setItem(STORAGE_KEYS.sessionId, sessionId);
+    if (activeChatId) localStorage.setItem(STORAGE_KEYS.activeChatId, activeChatId);
+}
+
+function clearComposerView() {
+    if (messagesArea) messagesArea.innerHTML = '';
+    if (emptyState) emptyState.style.display = 'flex';
+}
+
+function renderChatList(chats = []) {
+    if (!chatList) return;
+
+    if (!chats.length) {
+        chatList.innerHTML = '<div class="chat-list-empty">No conversations yet</div>';
+        return;
+    }
+
+    chatList.innerHTML = chats.map((chat) => `
+        <div class="chat-item ${chat.id === activeChatId ? 'active' : ''}" onclick="loadChat(${JSON.stringify(chat.id)})">
+            <span class="chat-title">${escapeHtml(chat.title || 'New Chat')}</span>
+            <div class="delete-chat" onclick="event.stopPropagation(); deleteChat(${JSON.stringify(chat.id)})" title="Delete chat">
+                ×
+            </div>
+        </div>
+    `).join('');
+}
+
+async function loadChats() {
+    if (!sessionId) return [];
+
+    const response = await fetch(`/api/chats?sessionId=${encodeURIComponent(sessionId)}`);
+    const data = await response.json();
+    const chats = data.chats || [];
+    renderChatList(chats);
+    return chats;
+}
+
+async function loadChatMessages(chatId) {
+    if (!sessionId || !chatId) return;
+
+    const response = await fetch(`/api/chats/${encodeURIComponent(chatId)}?sessionId=${encodeURIComponent(sessionId)}`);
+    const data = await response.json();
+    const messages = data.messages || [];
+
+    conversationHistory = messages.map((message) => ({
+        role: message.role,
+        content: message.content
+    }));
+
+    if (messagesArea) messagesArea.innerHTML = '';
+    if (emptyState) emptyState.style.display = messages.length ? 'none' : 'flex';
+
+    messages.forEach((message) => addMessageToUI(message.role, message.content));
+    scrollToBottom();
+}
+
+async function createFrontendChat() {
+    const response = await fetch('/api/chats/new', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId })
+    });
+    const data = await response.json();
+    activeChatId = data.chatId;
+    persistSessionState();
+    return activeChatId;
+}
+
+async function restoreOrCreateChat() {
+    const chats = await loadChats();
+    const storedActiveChatId = localStorage.getItem(STORAGE_KEYS.activeChatId);
+
+    if (storedActiveChatId && chats.some((chat) => chat.id === storedActiveChatId)) {
+        activeChatId = storedActiveChatId;
+        await loadChatMessages(activeChatId);
+        renderChatList(chats);
+        persistSessionState();
+        return;
+    }
+
+    if (chats.length > 0) {
+        activeChatId = chats[0].id;
+        persistSessionState();
+        await loadChatMessages(activeChatId);
+        renderChatList(chats);
+        return;
+    }
+
+    await createFrontendChat();
+    clearComposerView();
+    await loadChats();
+}
+
 // =============================================================
 // INITIALIZATION
 // =============================================================
 
 async function initializeMainApp() {
     console.log('[INIT] Main app initialization');
-    
-    // Create session
-    const response = await fetch('/api/session', { method: 'POST' });
-    const data = await response.json();
-    sessionId = data.sessionId;
-    
-    // Create first chat
-    activeChatId = 'chat-' + Date.now();
-    
-    // Set up form handler
-    const chatForm = document.querySelector('.chat-form');
-    if (chatForm) {
-        chatForm.addEventListener('submit', (e) => {
-            e.preventDefault();
-            const message = messageInput?.value?.trim();
-            if (message) {
-                sendMessage(message);
-            }
-        });
+    setGlobalLoading(true, 'Preparing your dashboard...');
+
+    try {
+        const storedSessionId = localStorage.getItem(STORAGE_KEYS.sessionId);
+        sessionId = storedSessionId;
+
+        if (!sessionId) {
+            const response = await fetch('/api/session', { method: 'POST' });
+            const data = await response.json();
+            sessionId = data.sessionId;
+            persistSessionState();
+        }
+
+        // Set up form handler
+        const chatForm = document.querySelector('.chat-form');
+        if (chatForm) {
+            chatForm.addEventListener('submit', (e) => {
+                e.preventDefault();
+                const message = messageInput?.value?.trim();
+                if (message) {
+                    sendMessage(message);
+                }
+            });
+        }
+
+        // Set up connect button
+        if (btnConnect) {
+            btnConnect.onclick = connectToMCPServer;
+        }
+
+        // Enable input field immediately
+        if (messageInput) {
+            messageInput.disabled = false;
+            messageInput.placeholder = 'Type your message... (will connect when you send)';
+        }
+
+        // Initialize UI
+        updateConnectionUI();
+        updateStepTracker();
+        renderContextChips();
+        renderAddressPanel();
+        await restoreOrCreateChat();
+
+        console.log('[INIT] App initialized successfully');
+    } finally {
+        setGlobalLoading(false);
     }
-    
-    // Set up connect button
-    if (btnConnect) {
-        btnConnect.onclick = connectToMCPServer;
-    }
-    
-    // Enable input field immediately
-    if (messageInput) {
-        messageInput.disabled = false;
-        messageInput.placeholder = 'Type your message... (will connect when you send)';
-    }
-    
-    // Initialize UI
-    updateConnectionUI();
-    updateStepTracker();
-    
-    console.log('[INIT] App initialized successfully');
 }
 
 // =============================================================
@@ -908,10 +1177,11 @@ window.quickSearch = quickSearch;
 window.detectUserLocation = detectUserLocation;
 window.connectToZomato = connectToMCPServer;
 window.startNewChat = () => {
-    activeChatId = 'chat-' + Date.now();
     conversationHistory = [];
-    if (messagesArea) messagesArea.innerHTML = '';
-    if (emptyState) emptyState.style.display = 'flex';
+    createFrontendChat().then(async () => {
+        clearComposerView();
+        await loadChats();
+    });
 };
 window.toggleSidebar = () => {
     sidebarOpen = !sidebarOpen;
@@ -926,12 +1196,67 @@ window.sendSuggestion = (suggestion) => {
     }
 };
 
+window.selectSavedAddressByIndex = (index) => {
+    const normalized = savedAddresses.map((a, idx) => normalizeAddress(a, idx));
+    const selected = normalized[index];
+    if (!selected) return;
+    selectedDeliveryAddress = selected;
+    showNotification(`Selected: ${selected.label}`, 'success');
+    safeSendPresetMessage(`Use address ${selected.id} for checkout and proceed to payment`);
+};
+
+window.refreshSavedAddresses = () => {
+    syncSavedAddressesFromMCP(true);
+};
+
+window.loadChat = async (chatId) => {
+    activeChatId = chatId;
+    persistSessionState();
+    await loadChatMessages(chatId);
+    await loadChats();
+};
+
+window.deleteChat = async (chatId) => {
+    if (!confirm('Delete this conversation?')) return;
+
+    try {
+        const response = await fetch(`/api/chats/${encodeURIComponent(chatId)}?sessionId=${encodeURIComponent(sessionId)}`, {
+            method: 'DELETE'
+        });
+
+        if (!response.ok) throw new Error('Failed to delete chat');
+
+        // If deleted chat was active, switch to another chat
+        if (activeChatId === chatId) {
+            const chats = await loadChats();
+            if (chats.length > 0) {
+                activeChatId = chats[0].id;
+                persistSessionState();
+                await loadChatMessages(activeChatId);
+            } else {
+                activeChatId = null;
+                conversationHistory = [];
+                if (messagesArea) messagesArea.innerHTML = '';
+                if (emptyState) emptyState.style.display = 'flex';
+            }
+        }
+
+        await loadChats();
+        showNotification('Chat deleted', 'success');
+    } catch (err) {
+        console.error('[Error] Delete chat:', err);
+        showNotification('Failed to delete chat', 'error');
+    }
+};
+
 // Auto-initialize when DOM is ready
 if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', () => {
+        document.body.classList.add('claude-ambient');
         console.log('[MCP App] Ready');
     });
 } else {
+    document.body.classList.add('claude-ambient');
     console.log('[MCP App] Ready');
 }
 
