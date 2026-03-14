@@ -189,7 +189,7 @@
         </section>
 
         <footer class="landing-footer">
-            <p>Powered by <strong style="color: #E23744;">OpenAI GPT-4o</strong> + <strong style="color: #E23744;">Zomato MCP</strong></p>
+            <p>Powered by <strong style="color: #E23744;">Gemini + Groq</strong> + <strong style="color: #E23744;">Zomato MCP</strong></p>
             <p class="footer-note">Smart AI Food Ordering Assistant • For demonstration purposes</p>
         </footer>
     </div>
@@ -498,6 +498,9 @@
                 <!-- Populated dynamically based on ordering stage -->
             </div>
 
+            <!-- Saved Address Panel (MCP) -->
+            <section class="address-panel" id="addressPanel" style="display: none;"></section>
+
             <!-- Composer Area -->
             <footer class="composer-area">
                 <form class="input-box glass" onsubmit="handleSubmit(event)">
@@ -511,7 +514,7 @@
                         </svg>
                     </button>
                 </form>
-                <p class="disclaimer">Powered by <strong>OpenAI GPT-4o</strong> + <strong>Zomato MCP</strong> — Smart AI
+                <p class="disclaimer">Powered by <strong>Gemini + Groq</strong> + <strong>Zomato MCP</strong> — Smart AI
                     Food Ordering</p>
             </footer>
         </main>
@@ -529,6 +532,14 @@
     
     <!-- Main Application with MCP Apps Architecture -->
     <script src="app-mcp.js"></script>
+
+    <!-- Global Processing Overlay -->
+    <div class="global-loading-overlay" id="globalLoadingOverlay" aria-live="polite" aria-busy="false">
+        <div class="global-loading-card">
+            <div class="loader-ring" aria-hidden="true"></div>
+            <p class="loader-label">Loading...</p>
+        </div>
+    </div>
 </body>
 
 </html>

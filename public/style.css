@@ -842,6 +842,12 @@ body::before {
     background: rgba(231, 76, 60, 0.1);
 }
 
+@media (hover: none), (pointer: coarse) {
+    .chat-item .delete-chat {
+        opacity: 1;
+    }
+}
+
 .sidebar-footer {
     padding: 14px 16px;
     border-top: 1px solid var(--glass-border);

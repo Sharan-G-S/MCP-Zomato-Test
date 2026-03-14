@@ -4,7 +4,8 @@
 
 ### Prerequisites
 - Node.js 18+ installed
-- OpenAI API key (with GPT-4o access)
+- Gemini API key
+- Groq API key
 - Modern web browser (Chrome, Firefox, Safari, Edge)
 
 ### Installation
@@ -21,7 +22,8 @@ npm install
 
 3. **Create environment file:**
 ```bash
-echo "OPENAI_API_KEY=your-openai-api-key-here" > .env
+echo "GEMINI_API_KEY=your-gemini-api-key-here" > .env
+echo "GROQ_API_KEY=your-groq-api-key-here" >> .env
 echo "PORT=3000" >> .env
 ```
 
@@ -146,16 +148,15 @@ Left panel shows available MCP tools:
 
 ### API Issues
 
-**Problem:** "OpenAI API key not configured"
+**Problem:** "AI provider not configured"
 **Solution:**
 - Check your .env file
-- Make sure OPENAI_API_KEY is set correctly
+- Make sure GEMINI_API_KEY or GROQ_API_KEY is set correctly
 - Restart the server
 
 **Problem:** Rate limit errors
 **Solution:**
-- You've exceeded your OpenAI quota
-- Check usage at platform.openai.com
+- Check your Gemini or Groq usage limits
 - Wait or upgrade your plan
 
 ### Display Issues

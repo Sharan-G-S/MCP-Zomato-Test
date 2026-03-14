@@ -2,6 +2,510 @@ import OpenAI from 'openai';
 import { isMCPConnected, getMCPTools, callMCPTool } from './mcp.js';
 import { addMessage } from './storage.js';
 
+function buildAIProviders() {
+    const providers = [];
+
+    const addGeminiProvider = (apiKey, model, name) => {
+        if (!apiKey) return;
+        if (String(apiKey).includes('your_gemini_api_key_here')) return;
+
+        providers.push({
+            name,
+            model,
+            client: new OpenAI({
+                apiKey,
+                baseURL: 'https://generativelanguage.googleapis.com/v1beta/openai/'
+            })
+        });
+    };
+
+    // Prefer Gemini providers first to reduce Groq rate-limit impact.
+    addGeminiProvider(
+        process.env.GEMINI_API_KEY,
+        process.env.GEMINI_MODEL || 'gemini-2.0-flash',
+        'gemini'
+    );
+
+    addGeminiProvider(
+        process.env.GEMINI_API_KEY_2 || process.env.GEMINI_API_KEY_BACKUP,
+        process.env.GEMINI_MODEL_2 || process.env.GEMINI_MODEL || 'gemini-2.0-flash',
+        'gemini-backup'
+    );
+
+    if (process.env.GROQ_API_KEY) {
+        providers.push({
+            name: 'groq',
+            model: process.env.GROQ_MODEL || 'llama-3.3-70b-versatile',
+            client: new OpenAI({
+                apiKey: process.env.GROQ_API_KEY,
+                baseURL: 'https://api.groq.com/openai/v1'
+            })
+        });
+    }
+
+    return providers;
+}
+
+async function createChatCompletion(providers, payload) {
+    let lastError = null;
+
+    for (const provider of providers) {
+        try {
+            const response = await provider.client.chat.completions.create({
+                ...payload,
+                model: provider.model
+            });
+            return response;
+        } catch (error) {
+            lastError = error;
+            console.error(`[API ERROR] ${provider.name} chat completion failed:`, error.message);
+        }
+    }
+
+    throw new Error(`AI model error: ${lastError?.message || 'Failed to generate response'}`);
+}
+
+function extractStructuredToolData(mcpResult) {
+    if (mcpResult?.structuredContent?.result) {
+        return mcpResult.structuredContent.result;
+    }
+
+    if (mcpResult?.structuredContent) {
+        return mcpResult.structuredContent;
+    }
+
+    if (mcpResult?.content) {
+        const joined = mcpResult.content.map((entry) => entry.text || JSON.stringify(entry)).join('\n');
+        try {
+            return JSON.parse(joined);
+        } catch {
+            return null;
+        }
+    }
+
+    return null;
+}
+
+function isSearchIntent(message) {
+    return /(find|search|show|need|get me|want|best|top rated|budget|cheap|under|near me|nearby|restaurant|restaurants|food|foods|dish|dishes|drink|drinks|beverage|beverages|milkshake|milkshakes|shake|shakes|pizza|burger|biryani|dosa|south indian|north indian|chinese|dessert|desserts|healthy|order|place|from|menu|cart|checkout|delivery|deliver)/i.test(message);
+}
+
+function isMenuIntent(message) {
+    return /\b(menu|show\s+me\s+the\s+menu|view\s+menu|open\s+menu)\b/i.test(message || '');
+}
+
+function extractSearchKeyword(message) {
+    return message
+        .replace(/\b(find|search|show|need|get me|want|me|the|best|top rated|budget|cheap|under|near me|nearby|restaurants?|restaurant|food|foods|dish|dishes|drink|drinks|beverage|beverages|options|please)\b/gi, ' ')
+        .replace(/\s+/g, ' ')
+        .trim() || message;
+}
+
+function cleanEntityPhrase(value = '') {
+    return String(value)
+        .replace(/[.,!?]+$/g, '')
+        .replace(/\b(now|right now|please|pls|today|tonight|for me)\b/gi, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+function extractOrderSearchPlan(message) {
+    const original = String(message || '').trim();
+    const fromIndex = original.toLowerCase().indexOf(' from ');
+
+    if (fromIndex === -1) {
+        const keyword = extractSearchKeyword(original);
+        return { primaryKeyword: keyword, secondaryKeyword: null, intentHint: null, hasExplicitRestaurant: false };
+    }
+
+    const dishPartRaw = original.slice(0, fromIndex);
+    const restaurantPartRaw = original.slice(fromIndex + 6);
+
+    const dishPart = cleanEntityPhrase(
+        dishPartRaw
+            .replace(/\b(place|order|book|get|give|send|bring|buy|want|need|one|two|three|four|five|a|an|the)\b/gi, ' ')
+            .replace(/\s+/g, ' ')
+    );
+
+    const restaurantPart = cleanEntityPhrase(restaurantPartRaw);
+
+    const primaryKeyword = restaurantPart || extractSearchKeyword(original);
+    const secondaryKeyword = dishPart || null;
+
+    return {
+        primaryKeyword,
+        secondaryKeyword,
+        hasExplicitRestaurant: true,
+        intentHint: secondaryKeyword
+            ? `User asked for **${secondaryKeyword}** from **${primaryKeyword}**.`
+            : null
+    };
+}
+
+function extractMenuRestaurantKeyword(message) {
+    const text = String(message || '').trim();
+
+    const explicitMatch = text.match(/menu\s+for(?:\s+restaurant)?\s+(.+)$/i);
+    if (explicitMatch?.[1]) {
+        return cleanEntityPhrase(explicitMatch[1]);
+    }
+
+    const fromMatch = text.match(/from\s+(.+)$/i);
+    if (fromMatch?.[1]) {
+        return cleanEntityPhrase(fromMatch[1]);
+    }
+
+    return cleanEntityPhrase(extractSearchKeyword(text));
+}
+
+function normalizeText(value) {
+    return String(value || '')
+        .toLowerCase()
+        .replace(/[^a-z0-9\s]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+function scoreRestaurantMatch(name, keyword) {
+    const normalizedName = normalizeText(name);
+    const normalizedKeyword = normalizeText(keyword);
+    if (!normalizedName || !normalizedKeyword) return 0;
+
+    if (normalizedName === normalizedKeyword) return 100;
+    if (normalizedName.startsWith(normalizedKeyword)) return 90;
+    if (normalizedName.includes(normalizedKeyword)) return 80;
+
+    const keywordTokens = normalizedKeyword.split(' ').filter(Boolean);
+    if (!keywordTokens.length) return 0;
+
+    const tokenMatches = keywordTokens.filter((token) => normalizedName.includes(token)).length;
+    if (tokenMatches === 0) return 0;
+
+    return Math.round((tokenMatches / keywordTokens.length) * 70);
+}
+
+function selectRestaurantsForKeyword(restaurants, keyword, strictMatch = false, limit = 8) {
+    const uniqueById = new Map();
+    restaurants.forEach((restaurant) => {
+        const key = String(restaurant.id || restaurant.name || '').toLowerCase();
+        if (!key) return;
+        if (!uniqueById.has(key)) uniqueById.set(key, restaurant);
+    });
+
+    const scored = Array.from(uniqueById.values())
+        .map((restaurant) => ({
+            restaurant,
+            score: scoreRestaurantMatch(restaurant.name, keyword)
+        }))
+        .filter((entry) => entry.score > 0)
+        .sort((a, b) => {
+            if (b.score !== a.score) return b.score - a.score;
+            const ratingDelta = (b.restaurant.rating || 0) - (a.restaurant.rating || 0);
+            return ratingDelta;
+        });
+
+    if (strictMatch) {
+        const strict = scored.filter((entry) => entry.score >= 80).map((entry) => entry.restaurant).slice(0, limit);
+        if (strict.length) return strict;
+    }
+
+    if (scored.length) {
+        return scored.map((entry) => entry.restaurant).slice(0, limit);
+    }
+
+    return Array.from(uniqueById.values()).slice(0, limit);
+}
+
+function extractAddresses(addressPayload) {
+    if (Array.isArray(addressPayload?.addresses)) return addressPayload.addresses;
+    if (Array.isArray(addressPayload?.result?.addresses)) return addressPayload.result.addresses;
+    return [];
+}
+
+function findRestaurantArray(value, seen = new Set()) {
+    if (!value || typeof value !== 'object') return null;
+    if (seen.has(value)) return null;
+    seen.add(value);
+
+    if (Array.isArray(value)) {
+        const hasRestaurantShape = value.some((item) => {
+            if (!item || typeof item !== 'object') return false;
+            return Boolean(item.name || item.res_name || item.restaurant_name || item.title);
+        });
+
+        if (hasRestaurantShape) {
+            return value;
+        }
+
+        for (const item of value) {
+            const nested = findRestaurantArray(item, seen);
+            if (nested) return nested;
+        }
+        return null;
+    }
+
+    for (const nestedValue of Object.values(value)) {
+        const nested = findRestaurantArray(nestedValue, seen);
+        if (nested) return nested;
+    }
+
+    return null;
+}
+
+function normalizeRestaurant(item, index = 0) {
+    const name = item.name || item.res_name || item.restaurant_name || item.title || `Restaurant ${index + 1}`;
+    const cuisine = item.cuisine || item.cuisines || item.tags || [];
+    const deliveryTime = item.deliveryTime || item.delivery_time || item.eta || item.delivery_eta || 'N/A';
+    const costForTwo = item.costForTwo || item.cost_for_two || item.avg_cost_for_two || item.price_for_two || 0;
+    const distance = item.distance || item.distance_in_km || item.locality || '';
+    const image = item.image || item.image_url || item.thumbnail || item.photo_url || '';
+    const rating = Number(item.rating || item.user_rating || item.aggregate_rating || item.avg_rating || 0) || 0;
+    const offers = item.offers || item.offer_text ? [item.offer_text].filter(Boolean) : [];
+    const id = item.id || item.res_id || item.restaurant_id || item.slug || `${name}-${index}`;
+
+    return {
+        id,
+        name,
+        cuisine: Array.isArray(cuisine) ? cuisine : String(cuisine || '').split(',').map((entry) => entry.trim()).filter(Boolean),
+        rating,
+        deliveryTime: typeof deliveryTime === 'number' ? `${deliveryTime} min` : String(deliveryTime),
+        costForTwo: Number(costForTwo) || 0,
+        image,
+        offers,
+        distance: String(distance || ''),
+        isOpen: item.isOpen ?? item.is_open ?? true,
+        raw: item
+    };
+}
+
+function normalizeRestaurantSearchPayload(searchData) {
+    const rawRestaurants = findRestaurantArray(searchData) || [];
+    return rawRestaurants.map(normalizeRestaurant).filter((restaurant) => restaurant.name);
+}
+
+function buildRestaurantSearchResponse(keyword, restaurants, preferredDish = null) {
+    if (!restaurants.length) {
+        return `## Search Results\nI couldn't find any matching restaurants for **${keyword}** right now. Try a more specific area or a broader dish keyword.`;
+    }
+
+    const rows = restaurants.slice(0, 5).map((restaurant) => {
+        return `| **${restaurant.name}** | ${restaurant.rating || 'N/A'} | ₹${restaurant.costForTwo || 'N/A'} for two | ${restaurant.deliveryTime || 'N/A'} | ${restaurant.distance || 'N/A'} |`;
+    }).join('\n');
+
+    const actionButtons = restaurants.slice(0, 3).map((restaurant) => {
+        if (preferredDish) {
+            return `[[ACTION:Find ${preferredDish} in ${restaurant.name}:Show me ${preferredDish} options in ${restaurant.name}]]`;
+        }
+        return `[[ACTION:View Menu for ${restaurant.name}:Show me the menu for ${restaurant.name}]]`;
+    }).join('\n');
+
+    const headerNote = preferredDish
+        ? `I prioritized matches for your requested dish **${preferredDish}**.\n\n`
+        : '';
+
+    return `## Restaurants for **${keyword}**\n\n${headerNote}| Restaurant Name | Rating | Cost | Delivery Time | Distance |\n| --- | --- | --- | --- | --- |\n${rows}\n\n${actionButtons}`;
+}
+
+async function attemptDirectRestaurantSearch(userMessage, toolCalls) {
+    try {
+        const searchPlan = extractOrderSearchPlan(userMessage);
+        const addressResult = await callMCPTool('get_saved_addresses_for_user', {});
+        const addressData = extractStructuredToolData(addressResult);
+        const addresses = extractAddresses(addressData);
+        const firstAddress = addresses[0];
+        const addressId = firstAddress?.address_id || firstAddress?.id || firstAddress?.addressId;
+
+        const addressToolCall = {
+            id: `fallback-address-${Date.now()}`,
+            name: 'get_saved_addresses_for_user',
+            args: {},
+            status: 'success',
+            result: JSON.stringify(addressData || {}).substring(0, 2000),
+            data: addressData
+        };
+        toolCalls.push(addressToolCall);
+
+        const primaryArgs = addressId
+            ? { keyword: searchPlan.primaryKeyword, address_id: String(addressId), page_size: 5 }
+            : { keyword: searchPlan.primaryKeyword, page_size: 5 };
+
+        let activeSearchArgs = primaryArgs;
+        let searchResult = await callMCPTool('get_restaurants_for_keyword', primaryArgs);
+        let activeSearchData = extractStructuredToolData(searchResult);
+        let normalizedRestaurants = normalizeRestaurantSearchPayload(activeSearchData);
+        normalizedRestaurants = selectRestaurantsForKeyword(
+            normalizedRestaurants,
+            searchPlan.primaryKeyword,
+            searchPlan.hasExplicitRestaurant,
+            8
+        );
+
+        // If restaurant-name search returns no results, retry with dish keyword.
+        if (!normalizedRestaurants.length && searchPlan.secondaryKeyword && searchPlan.secondaryKeyword !== searchPlan.primaryKeyword) {
+            const secondaryArgs = addressId
+                ? { keyword: searchPlan.secondaryKeyword, address_id: String(addressId), page_size: 5 }
+                : { keyword: searchPlan.secondaryKeyword, page_size: 5 };
+            searchResult = await callMCPTool('get_restaurants_for_keyword', secondaryArgs);
+            activeSearchArgs = secondaryArgs;
+            activeSearchData = extractStructuredToolData(searchResult);
+            normalizedRestaurants = normalizeRestaurantSearchPayload(activeSearchData);
+            normalizedRestaurants = selectRestaurantsForKeyword(
+                normalizedRestaurants,
+                searchPlan.secondaryKeyword,
+                false,
+                8
+            );
+        }
+
+        const searchToolCall = {
+            id: `fallback-search-${Date.now()}`,
+            name: 'get_restaurants_for_keyword',
+            args: activeSearchArgs,
+            status: 'success',
+            result: JSON.stringify(activeSearchData || {}).substring(0, 2000),
+            data: {
+                restaurants: normalizedRestaurants,
+                raw: activeSearchData
+            }
+        };
+        toolCalls.push(searchToolCall);
+
+        const responsePrefix = searchPlan.intentHint ? `${searchPlan.intentHint}\n\n` : '';
+        return {
+            response: responsePrefix + buildRestaurantSearchResponse(
+                searchPlan.primaryKeyword,
+                normalizedRestaurants,
+                searchPlan.secondaryKeyword
+            ),
+            toolCalls
+        };
+    } catch (error) {
+        console.error('[FALLBACK SEARCH ERROR]:', error.message);
+        return null;
+    }
+}
+
+async function attemptDirectMenuFlow(userMessage, toolCalls) {
+    try {
+        const restaurantKeyword = extractMenuRestaurantKeyword(userMessage);
+        if (!restaurantKeyword) return null;
+
+        const addressResult = await callMCPTool('get_saved_addresses_for_user', {});
+        const addressData = extractStructuredToolData(addressResult);
+        const addresses = extractAddresses(addressData);
+        const firstAddress = addresses[0];
+        const addressId = firstAddress?.address_id || firstAddress?.id || firstAddress?.addressId;
+
+        toolCalls.push({
+            id: `menu-address-${Date.now()}`,
+            name: 'get_saved_addresses_for_user',
+            args: {},
+            status: 'success',
+            result: JSON.stringify(addressData || {}).substring(0, 2000),
+            data: addressData
+        });
+
+        const searchArgs = addressId
+            ? { keyword: restaurantKeyword, address_id: String(addressId), page_size: 8 }
+            : { keyword: restaurantKeyword, page_size: 8 };
+        const searchResult = await callMCPTool('get_restaurants_for_keyword', searchArgs);
+        const searchData = extractStructuredToolData(searchResult);
+        const restaurants = selectRestaurantsForKeyword(
+            normalizeRestaurantSearchPayload(searchData),
+            restaurantKeyword,
+            true,
+            5
+        );
+
+        toolCalls.push({
+            id: `menu-search-${Date.now()}`,
+            name: 'get_restaurants_for_keyword',
+            args: searchArgs,
+            status: 'success',
+            result: JSON.stringify(searchData || {}).substring(0, 2000),
+            data: {
+                restaurants,
+                raw: searchData
+            }
+        });
+
+        const selectedRestaurant = restaurants[0];
+        if (!selectedRestaurant) {
+            return {
+                response: `I could not find a strong restaurant match for **${restaurantKeyword}**. Try a slightly shorter restaurant name.`,
+                toolCalls
+            };
+        }
+
+        const restaurantIdRaw =
+            selectedRestaurant.raw?.res_id ||
+            selectedRestaurant.raw?.restaurant_id ||
+            selectedRestaurant.id;
+
+        const numericResId = Number(restaurantIdRaw);
+        const menuArgCandidates = [];
+
+        if (!Number.isNaN(numericResId) && numericResId > 0) {
+            menuArgCandidates.push({ res_id: numericResId });
+            menuArgCandidates.push({ restaurant_id: numericResId });
+        }
+
+        if (restaurantIdRaw !== undefined && restaurantIdRaw !== null) {
+            menuArgCandidates.push({ res_id: String(restaurantIdRaw) });
+            menuArgCandidates.push({ restaurant_id: String(restaurantIdRaw) });
+        }
+
+        menuArgCandidates.push({ restaurant_name: selectedRestaurant.name });
+
+        if (addressId) {
+            menuArgCandidates.push({ restaurant_name: selectedRestaurant.name, address_id: String(addressId) });
+        }
+
+        let menuData = null;
+        let usedMenuArgs = null;
+        let lastMenuError = null;
+
+        for (const args of menuArgCandidates) {
+            try {
+                const menuResult = await callMCPTool('get_menu_items_listing', args);
+                menuData = extractStructuredToolData(menuResult) || menuResult;
+                usedMenuArgs = args;
+                break;
+            } catch (error) {
+                lastMenuError = error;
+            }
+        }
+
+        if (!menuData) {
+            throw lastMenuError || new Error('Unable to fetch menu for selected restaurant');
+        }
+
+        toolCalls.push({
+            id: `menu-listing-${Date.now()}`,
+            name: 'get_menu_items_listing',
+            args: usedMenuArgs || {},
+            status: 'success',
+            result: JSON.stringify(menuData || {}).substring(0, 2000),
+            data: menuData
+        });
+
+        const response = [
+            `## Menu for **${selectedRestaurant.name}**`,
+            '',
+            'I opened the menu for your selected restaurant. Pick items and I will add them to cart, apply the best coupon, and take you to payment.',
+            '',
+            `[[ACTION:Add bestselling item to cart:Add the bestselling item from ${selectedRestaurant.name} to my cart]]`,
+            '[[ACTION:Apply best coupon:Show available coupons and apply the best coupon to my cart]]',
+            '[[ACTION:Proceed to UPI payment:Proceed to payment using UPI and show QR code]]'
+        ].join('\n');
+
+        return { response, toolCalls };
+    } catch (error) {
+        console.error('[DIRECT MENU FLOW ERROR]:', error.message);
+        return null;
+    }
+}
+
 // --- Convert MCP tools to OpenAI function-calling format ---
 function mcpToolsToOpenAIFunctions(tools) {
     return tools.map(tool => ({
@@ -14,16 +518,39 @@ function mcpToolsToOpenAIFunctions(tools) {
     }));
 }
 
-// --- OpenAI Chat with Tool Calling (most reliable for function calls) ---
+// --- AI Chat with Tool Calling ---
 export async function chatWithOpenAI(sessionId, chatId, userMessage, conversationHistory = [], userLocation = null) {
-    const openaiKey = process.env.OPENAI_API_KEY;
-    if (!openaiKey || openaiKey === 'your_openai_api_key_here') {
-        throw new Error('OpenAI API key not configured. Please set OPENAI_API_KEY in the .env file.');
+    const providers = buildAIProviders();
+    if (providers.length === 0) {
+        throw new Error('No AI provider configured. Set GEMINI_API_KEY or GROQ_API_KEY in the .env file.');
     }
 
-    const openai = new OpenAI({ 
-        apiKey: openaiKey
-    });
+    if (isMenuIntent(userMessage) && isMCPConnected()) {
+        const directToolCalls = [];
+        const directMenu = await attemptDirectMenuFlow(userMessage, directToolCalls);
+        if (directMenu) {
+            addMessage(sessionId, chatId, 'user', userMessage);
+            addMessage(sessionId, chatId, 'assistant', directMenu.response);
+            return { response: directMenu.response, toolCalls: directMenu.toolCalls, chatId };
+        }
+    }
+
+    if (isSearchIntent(userMessage) && isMCPConnected()) {
+        const directToolCalls = [];
+        const directSearch = await attemptDirectRestaurantSearch(userMessage, directToolCalls);
+        if (directSearch) {
+            addMessage(sessionId, chatId, 'user', userMessage);
+            addMessage(sessionId, chatId, 'assistant', directSearch.response);
+            return { response: directSearch.response, toolCalls: directSearch.toolCalls, chatId };
+        }
+    }
+
+    if (isSearchIntent(userMessage) && !isMCPConnected()) {
+        const response = 'Zomato MCP is not connected yet. Please click **Connect to Zomato** and complete the login flow first, then I can fetch real restaurants, dishes, menus, offers, and checkout details for you.';
+        addMessage(sessionId, chatId, 'user', userMessage);
+        addMessage(sessionId, chatId, 'assistant', response);
+        return { response, toolCalls: [], chatId };
+    }
 
     const systemMessage = {
         role: 'system',
@@ -396,18 +923,18 @@ Use this mental model to determine which tool to call and whether to search broa
     try {
         let response;
         try {
-            response = await openai.chat.completions.create({
-                model: 'gpt-4o-mini',
+            response = await createChatCompletion(providers, {
                 messages,
                 tools: openaiTools,
                 tool_choice: openaiTools ? 'auto' : undefined,
-                temperature: 0.7,
+                temperature: 0.2,
                 max_tokens: 4096,
             });
         } catch (apiError) {
-            console.error('[API ERROR] Groq API call failed:', apiError.message);
+            console.error('[API ERROR] Provider chat completion failed:', apiError.message);
             console.error('[API ERROR] Full error:', JSON.stringify(apiError, null, 2));
-            throw new Error(`AI model error: ${apiError.message || 'Failed to generate response'}`);
+            const message = apiError?.message || 'Failed to generate response';
+            throw new Error(message.startsWith('AI model error:') ? message : `AI model error: ${message}`);
         }
 
         let assistantMessage = response.choices[0].message;
@@ -461,10 +988,17 @@ Use this mental model to determine which tool to call and whether to search broa
                 console.log(`[TOOL] Calling: ${toolName} ${JSON.stringify(toolArgs)}`);
 
                 // Fix: Convert IDs to integers if present (Zomato API requires integers)
-                const idFields = ['res_id', 'item_id', 'menu_item_id', 'address_id', 'cart_id', 'order_id'];
+                const idFields = ['res_id', 'item_id', 'menu_item_id'];
                 idFields.forEach(field => {
                     if (toolArgs[field] && typeof toolArgs[field] === 'string') {
                         toolArgs[field] = parseInt(toolArgs[field], 10);
+                    }
+                });
+
+                const stringIdFields = ['address_id', 'cart_id', 'order_id'];
+                stringIdFields.forEach(field => {
+                    if (toolArgs[field] !== undefined && toolArgs[field] !== null) {
+                        toolArgs[field] = String(toolArgs[field]);
                     }
                 });
                 
@@ -510,12 +1044,11 @@ Use this mental model to determine which tool to call and whether to search broa
             // On the last iteration, force a text response (no more tool calls)
             const shouldForceResponse = iterations >= 3; // Force after 3 iterations instead of 4
             
-            response = await openai.chat.completions.create({
-                model: 'gpt-4o-mini',
+            response = await createChatCompletion(providers, {
                 messages: runMessages,
                 tools: openaiTools,
                 tool_choice: shouldForceResponse ? 'none' : 'auto',
-                temperature: 0.7,
+                temperature: 0.2,
                 max_tokens: 4096,
             });
 
@@ -530,12 +1063,30 @@ Use this mental model to determine which tool to call and whether to search broa
 
         const finalContent = assistantMessage.content || 'I processed your request but did not get a text response.';
 
+        const hasSuccessfulRestaurantSearch = toolCalls.some(
+            (call) => call.name === 'get_restaurants_for_keyword' && call.status === 'success' && call.data
+        );
+
+        if (!hasSuccessfulRestaurantSearch && isMCPConnected() && isSearchIntent(userMessage)) {
+            const fallbackSearch = await attemptDirectRestaurantSearch(userMessage, toolCalls);
+            if (fallbackSearch) {
+                addMessage(sessionId, chatId, 'assistant', fallbackSearch.response);
+                return { response: fallbackSearch.response, toolCalls: fallbackSearch.toolCalls, chatId };
+            }
+        }
+
         // Save assistant response to persistent storage
         addMessage(sessionId, chatId, 'assistant', finalContent);
 
         return { response: finalContent, toolCalls, chatId };
     } catch (err) {
         console.error('[ERROR] OpenAI:', err.message);
+        if (/429|rate limit/i.test(err.message || '')) {
+            const guidance = isMCPConnected()
+                ? 'AI provider is rate-limited right now. Zomato MCP is connected, so please retry your search/order query and I will prioritize MCP tool results.'
+                : 'AI provider is rate-limited right now. Please add/verify GEMINI_API_KEY (and optional GEMINI_API_KEY_2) in .env, then retry.';
+            throw new Error(guidance);
+        }
         throw err;
     }
 }

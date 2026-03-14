@@ -115,7 +115,15 @@ class ZomatoUI {
      * Render menu items
      */
     renderMenu(menuData, restaurantName) {
-        const { categories = [], restaurant } = menuData;
+        const restaurant = menuData?.restaurant || menuData?.result?.restaurant || {};
+        const resolvedRestaurantName = restaurantName || restaurant?.name || menuData?.restaurant_name || 'Menu';
+        const categories = this.extractMenuCategories(menuData);
+
+        this.selectedRestaurant = {
+            ...(this.selectedRestaurant || {}),
+            name: resolvedRestaurantName,
+            id: restaurant?.id || restaurant?.res_id || this.selectedRestaurant?.id || null
+        };
 
         return `
             <div class="zomato-section menu-section">
@@ -127,7 +135,7 @@ class ZomatoUI {
                         </svg>
                     </button>
                     <div>
-                        <h3>${restaurantName || restaurant?.name || 'Menu'}</h3>
+                        <h3>${resolvedRestaurantName}</h3>
                         <p class="menu-subtitle">${categories.length} categories • ${this.countTotalItems(categories)} items</p>
                     </div>
                     <button class="cart-btn" onclick="viewCart()">
@@ -146,10 +154,52 @@ class ZomatoUI {
                     <button class="filter-chip" onclick="filterMenu('bestseller')">⭐ Bestseller</button>
                 </div>
                 <div class="menu-content">
-                    ${categories.map(category => this.renderCategory(category)).join('')}
+                    ${categories.length ? categories.map(category => this.renderCategory(category)).join('') : '<div class="no-results">No menu items available for this restaurant right now.</div>'}
                 </div>
+                ${this.renderCheckoutNavigator('menu')}
             </div>
         `;
+    }
+
+    extractMenuCategories(menuData = {}) {
+        const candidates = [
+            menuData?.categories,
+            menuData?.menu?.categories,
+            menuData?.result?.categories,
+            menuData?.result?.menu?.categories,
+            menuData?.data?.categories,
+            menuData?.menu_categories,
+            menuData?.result?.menu_categories
+        ];
+
+        for (const categoryList of candidates) {
+            if (Array.isArray(categoryList) && categoryList.length > 0) {
+                return categoryList.map((category, idx) => ({
+                    name: category?.name || category?.category_name || `Category ${idx + 1}`,
+                    items: Array.isArray(category?.items)
+                        ? category.items
+                        : Array.isArray(category?.menu_items)
+                            ? category.menu_items
+                            : []
+                }));
+            }
+        }
+
+        const flatItems =
+            (Array.isArray(menuData?.items) && menuData.items) ||
+            (Array.isArray(menuData?.menu_items) && menuData.menu_items) ||
+            (Array.isArray(menuData?.result?.items) && menuData.result.items) ||
+            (Array.isArray(menuData?.result?.menu_items) && menuData.result.menu_items) ||
+            [];
+
+        if (flatItems.length > 0) {
+            return [{
+                name: 'Recommended Dishes',
+                items: flatItems
+            }];
+        }
+
+        return [];
     }
 
     /**
@@ -290,6 +340,104 @@ class ZomatoUI {
                         <polyline points="12 5 19 12 12 19"/>
                     </svg>
                 </button>
+                ${this.renderCheckoutNavigator('cart')}
+            </div>
+        `;
+    }
+
+    renderOffers(offerData = {}) {
+        const offers = offerData.offers || offerData.coupons || offerData.available_offers || [];
+
+        if (!Array.isArray(offers) || offers.length === 0) {
+            return `
+                <div class="zomato-section offer-section">
+                    <div class="offer-empty">No coupons available right now. You can still proceed to payment.</div>
+                    ${this.renderCheckoutNavigator('offers')}
+                </div>
+            `;
+        }
+
+        return `
+            <div class="zomato-section offer-section">
+                <div class="section-header">
+                    <h3>Coupons and Offers</h3>
+                </div>
+                <div class="offer-list">
+                    ${offers.slice(0, 6).map((offer) => this.renderOfferCard(offer)).join('')}
+                </div>
+                ${this.renderCheckoutNavigator('offers')}
+            </div>
+        `;
+    }
+
+    renderOfferCard(offer) {
+        const code = offer.code || offer.coupon_code || offer.offer_code || 'BESTDEAL';
+        const title = offer.title || offer.name || offer.description || 'Save more on your order';
+        const discount = offer.discount || offer.discount_text || offer.benefit || '';
+
+        return `
+            <article class="offer-card">
+                <div>
+                    <h4>${title}</h4>
+                    ${discount ? `<p>${discount}</p>` : ''}
+                </div>
+                <button class="apply-coupon-btn" onclick='applyCoupon(${this.jsArg(code)})'>Apply ${code}</button>
+            </article>
+        `;
+    }
+
+    renderPayment(paymentData = {}) {
+        const qrUrl =
+            paymentData.qr_url ||
+            paymentData.qrUrl ||
+            paymentData.qr_code_url ||
+            paymentData.qrCodeUrl ||
+            paymentData.upi_qr ||
+            paymentData.upiQr ||
+            paymentData.payment_qr ||
+            paymentData.paymentQr ||
+            paymentData.image_url ||
+            paymentData.imageUrl ||
+            '';
+
+        const upiIntent = paymentData.upi_intent || paymentData.upiIntent || paymentData.payment_link || paymentData.paymentLink || '';
+        const amount = paymentData.amount || paymentData.total || '';
+
+        return `
+            <div class="zomato-section payment-section">
+                <div class="payment-header">
+                    <h3>UPI Payment</h3>
+                    <p>Scan this QR in any UPI app to complete payment.</p>
+                </div>
+                <div class="payment-methods">
+                    <button class="payment-method-btn active" onclick="selectPaymentMethod('UPI')">UPI</button>
+                    <button class="payment-method-btn" onclick="selectPaymentMethod('Card')">Card</button>
+                    <button class="payment-method-btn" onclick="selectPaymentMethod('Cash on Delivery')">Cash on Delivery</button>
+                </div>
+                <div class="upi-qr-card">
+                    ${qrUrl ? `<img class="upi-qr-image" src="${qrUrl}" alt="UPI QR code" />` : '<div class="upi-qr-placeholder">QR code will appear here after payment initiation</div>'}
+                    ${amount ? `<div class="upi-amount">Amount: INR ${amount}</div>` : ''}
+                    ${upiIntent ? `<a class="upi-intent-link" href="${upiIntent}" target="_blank" rel="noopener">Open UPI payment link</a>` : ''}
+                </div>
+                ${this.renderCheckoutNavigator('payment')}
+            </div>
+        `;
+    }
+
+    renderCheckoutNavigator(stage = 'menu') {
+        const steps = [
+            { id: 'menu', label: '1. Menu', action: "openCheckoutStep('menu')" },
+            { id: 'dish', label: '2. Select Dish', action: "openCheckoutStep('dish')" },
+            { id: 'coupon', label: '3. Apply Coupon', action: "openCheckoutStep('coupon')" },
+            { id: 'payment', label: '4. Payment', action: "openCheckoutStep('payment')" },
+            { id: 'upi', label: '5. UPI QR', action: "openCheckoutStep('upi')" }
+        ];
+
+        return `
+            <div class="checkout-nav" data-stage="${stage}">
+                ${steps.map((step) => `
+                    <button class="checkout-step-btn ${step.id === stage ? 'active' : ''}" onclick="${step.action}">${step.label}</button>
+                `).join('')}
             </div>
         `;
     }
@@ -380,6 +528,34 @@ class ZomatoUI {
                     Track Order
                 </button>
             </div>
+        `;
+    }
+
+    renderSavedAddresses(addresses = []) {
+        if (!Array.isArray(addresses) || addresses.length === 0) {
+            return '';
+        }
+
+        const cards = addresses.map((address, index) => {
+            const addressId = address.address_id || address.id || `address-${index + 1}`;
+            const label = address.location_name || address.name || address.address || `Address ${index + 1}`;
+            return `
+                <article class="mcp-address-item">
+                    <div class="mcp-address-head">
+                        <strong>Address ${index + 1}</strong>
+                        <span>ID: ${addressId}</span>
+                    </div>
+                    <p>${label}</p>
+                    <button class="address-use-btn" onclick='selectSavedAddressByIndex(${index})'>Use This Address</button>
+                </article>
+            `;
+        }).join('');
+
+        return `
+            <section class="mcp-addresses">
+                <div class="mcp-addresses-title">Saved Addresses from Zomato MCP</div>
+                <div class="mcp-addresses-list">${cards}</div>
+            </section>
         `;
     }
 

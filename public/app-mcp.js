@@ -38,6 +38,8 @@ let selectedPaymentMethod = 'UPI';
 let connectionAttempts = 0;
 let savedAddresses = [];
 let globalLoadingCount = 0;
+let chatListHandlersBound = false;
+let contextChipHandlersBound = false;
 const MAX_CONNECTION_ATTEMPTS = 3;
 const STORAGE_KEYS = {
     sessionId: 'zomato-mcp-session-id',
@@ -485,6 +487,17 @@ async function sendMessage(message) {
  */
 function extractStructuredData(toolCalls) {
     if (!toolCalls || toolCalls.length === 0) return null;
+
+    // Prioritize menu when available (menu flows may include a preceding restaurant lookup).
+    const menuTool = toolCalls.find(tc =>
+        tc.name === 'get_menu_items_listing' && tc.status === 'success' && tc.data
+    );
+    if (menuTool && menuTool.data) {
+        return {
+            type: 'menu',
+            data: menuTool.data
+        };
+    }
     
     // Look for restaurant search results
     const restaurantTool = toolCalls.find(tc => 
@@ -494,17 +507,6 @@ function extractStructuredData(toolCalls) {
         return {
             type: 'restaurants',
             data: restaurantTool.data
-        };
-    }
-    
-    // Look for menu data
-    const menuTool = toolCalls.find(tc => 
-        tc.name === 'get_menu_items_listing' && tc.status === 'success' && tc.data
-    );
-    if (menuTool && menuTool.data) {
-        return {
-            type: 'menu',
-            data: menuTool.data
         };
     }
     
@@ -528,6 +530,26 @@ function extractStructuredData(toolCalls) {
         return {
             type: 'order',
             data: checkoutTool.data
+        };
+    }
+
+    const offerTool = toolCalls.find(tc =>
+        /offer|coupon|discount/i.test(tc.name || '') && tc.status === 'success' && tc.data
+    );
+    if (offerTool && offerTool.data) {
+        return {
+            type: 'offers',
+            data: offerTool.data
+        };
+    }
+
+    const paymentTool = toolCalls.find(tc =>
+        /payment|upi|qr/i.test(tc.name || '') && tc.status === 'success' && tc.data
+    );
+    if (paymentTool && paymentTool.data) {
+        return {
+            type: 'payment',
+            data: paymentTool.data
         };
     }
 
@@ -570,6 +592,13 @@ function addMessageToUI(role, content, toolCalls = [], structuredData = null) {
         let zomatoHTML = '';
         if (structuredData && window.ZomatoUI) {
             zomatoHTML = renderZomatoUI(structuredData);
+        }
+
+        if (!zomatoHTML && window.ZomatoUI) {
+            const paymentFromText = extractPaymentDataFromText(content);
+            if (paymentFromText) {
+                zomatoHTML = window.ZomatoUI.renderPayment(paymentFromText);
+            }
         }
         
         // If no structured data, try to parse content for JSON
@@ -665,6 +694,14 @@ function renderZomatoUI(structuredData) {
         return zomato.renderOrderConfirmation(data);
     }
 
+    if (type === 'offers') {
+        return zomato.renderOffers(data);
+    }
+
+    if (type === 'payment') {
+        return zomato.renderPayment(data);
+    }
+
     if (type === 'addresses') {
         return zomato.renderSavedAddresses(data.addresses || []);
     }
@@ -694,12 +731,32 @@ function renderZomatoUI(structuredData) {
             return zomato.renderOrderConfirmation(data);
         }
 
+        if (data.qr_url || data.qrUrl || data.qr_code_url || data.qrCodeUrl || data.upi_qr || data.upiQr || data.payment_qr || data.paymentQr) {
+            return zomato.renderPayment(data);
+        }
+
+        if (data.offers || data.coupons || data.available_offers) {
+            return zomato.renderOffers(data);
+        }
+
         if (Array.isArray(data.addresses)) {
             return zomato.renderSavedAddresses(data.addresses);
         }
     }
     
     return '';
+}
+
+function extractPaymentDataFromText(content = '') {
+    const qrMatch = content.match(/https?:\/\/[^\s)]+(?:qr|qrcode|upi)[^\s)]*/i);
+    const upiMatch = content.match(/upi:\/\/pay[^\s)]+/i);
+
+    if (!qrMatch && !upiMatch) return null;
+
+    return {
+        qr_url: qrMatch ? qrMatch[0] : '',
+        upi_intent: upiMatch ? upiMatch[0] : ''
+    };
 }
 
 function renderToolCalls(toolCalls) {
@@ -838,13 +895,72 @@ function updateLocationChip() {
     renderContextChips();
 }
 
+function setupChatListHandlers() {
+    if (!chatList || chatListHandlersBound) return;
+
+    chatList.addEventListener('click', async (event) => {
+        const deleteButton = event.target.closest('.delete-chat');
+        if (deleteButton) {
+            event.stopPropagation();
+            const chatId = deleteButton.getAttribute('data-chat-id');
+            if (chatId) {
+                await window.deleteChat(chatId);
+            }
+            return;
+        }
+
+        const chatItem = event.target.closest('.chat-item');
+        if (chatItem) {
+            const chatId = chatItem.getAttribute('data-chat-id');
+            if (chatId) {
+                await window.loadChat(chatId);
+            }
+        }
+    });
+
+    chatListHandlersBound = true;
+}
+
+function setupContextChipHandlers() {
+    if (!contextChips || contextChipHandlersBound) return;
+
+    contextChips.addEventListener('click', (event) => {
+        const chip = event.target.closest('.context-chip');
+        if (!chip) return;
+
+        const suggestion = chip.getAttribute('data-suggestion');
+        if (suggestion) {
+            sendSuggestion(suggestion);
+        }
+    });
+
+    contextChipHandlersBound = true;
+}
+
 function renderContextChips() {
     if (!contextChips) return;
 
     const chips = [];
+
+    const previewPrompts = [
+        'Best veg restaurants nearby',
+        'Best biryani nearby',
+        'Top rated dosa restaurants near me',
+        'Best pizza under 300 nearby',
+        'Healthy food restaurants near me'
+    ];
+
+    previewPrompts.forEach((prompt) => {
+        chips.push(`
+            <button class="context-chip" type="button" data-suggestion="${escapeHtml(prompt)}">
+                <span class="chip-text">${escapeHtml(prompt)}</span>
+            </button>
+        `);
+    });
+
     if (userLocation?.label) {
         chips.push(`
-            <button class="context-chip location" onclick="sendSuggestion('Find best restaurants near my current location')">
+            <button class="context-chip location" type="button" data-suggestion="Find best restaurants near my current location">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/>
                     <circle cx="12" cy="10" r="3"/>
@@ -856,7 +972,7 @@ function renderContextChips() {
 
     if (savedAddresses.length > 0) {
         chips.push(`
-            <button class="context-chip address" onclick="sendSuggestion('Use my saved home address for delivery')">
+            <button class="context-chip address" type="button" data-suggestion="Use my saved home address for delivery">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <path d="M3 9.5L12 3l9 6.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1V9.5z"/>
                 </svg>
@@ -1036,11 +1152,11 @@ function renderChatList(chats = []) {
     }
 
     chatList.innerHTML = chats.map((chat) => `
-        <div class="chat-item ${chat.id === activeChatId ? 'active' : ''}" onclick="loadChat(${JSON.stringify(chat.id)})">
+        <div class="chat-item ${chat.id === activeChatId ? 'active' : ''}" data-chat-id="${escapeHtml(chat.id)}">
             <span class="chat-title">${escapeHtml(chat.title || 'New Chat')}</span>
-            <div class="delete-chat" onclick="event.stopPropagation(); deleteChat(${JSON.stringify(chat.id)})" title="Delete chat">
+            <button type="button" class="delete-chat" data-chat-id="${escapeHtml(chat.id)}" title="Delete chat" aria-label="Delete chat">
                 ×
-            </div>
+            </button>
         </div>
     `).join('');
 }
@@ -1154,6 +1270,8 @@ async function initializeMainApp() {
         }
 
         // Initialize UI
+        setupChatListHandlers();
+        setupContextChipHandlers();
         updateConnectionUI();
         updateStepTracker();
         renderContextChips();
@@ -1216,7 +1334,11 @@ window.loadChat = async (chatId) => {
     await loadChats();
 };
 
-window.deleteChat = async (chatId) => {
+window.deleteChat = async (chatId, clickEvent) => {
+    if (clickEvent && typeof clickEvent.stopPropagation === 'function') {
+        clickEvent.stopPropagation();
+    }
+
     if (!confirm('Delete this conversation?')) return;
 
     try {
@@ -1574,6 +1696,63 @@ window.proceedToCheckout = function() {
     console.log('[Cart] Proceed to checkout');
 
     safeSendPresetMessage('Proceed to payment and checkout with my current cart');
+};
+
+window.applyCoupon = function(couponCode = '') {
+    console.log('[Offers] Apply coupon:', couponCode);
+    safeSendPresetMessage(couponCode
+        ? `Apply coupon code ${couponCode} to my cart and show updated total`
+        : 'Show available coupons and apply the best coupon to my cart'
+    );
+};
+
+window.selectPaymentMethod = function(method = 'UPI') {
+    selectedPaymentMethod = method;
+    console.log('[Payment] Selected method:', method);
+
+    document.querySelectorAll('.payment-method-btn').forEach((button) => {
+        button.classList.toggle('active', button.textContent.trim().toLowerCase() === String(method).toLowerCase());
+    });
+
+    safeSendPresetMessage(`Use ${method} as my payment method and continue checkout`);
+};
+
+window.openCheckoutStep = function(step) {
+    const stepKey = String(step || '').toLowerCase();
+
+    if (stepKey === 'dish') {
+        const firstVisibleAddButton = Array.from(document.querySelectorAll('.menu-item .add-btn'))
+            .find((button) => {
+                const menuItem = button.closest('.menu-item');
+                if (!menuItem) return false;
+                return window.getComputedStyle(menuItem).display !== 'none';
+            });
+
+        if (firstVisibleAddButton) {
+            firstVisibleAddButton.click();
+            showNotification('Selected a dish and added it to cart', 'success');
+            return;
+        }
+
+        const restaurantName = window.ZomatoUI?.selectedRestaurant?.name || '';
+        const fallbackMessage = restaurantName
+            ? `Show me popular dishes from ${restaurantName} with prices and add one bestseller to my cart`
+            : 'Show me popular dishes with prices and add one bestseller to my cart';
+
+        showNotification('No visible dishes yet. Fetching dish options...', 'info');
+        safeSendPresetMessage(fallbackMessage);
+        return;
+    }
+
+    const stepMessages = {
+        menu: 'Show me the menu of my selected restaurant',
+        dish: 'Show me popular dishes and add one to my cart',
+        coupon: 'Show available coupons and apply the best coupon to my cart',
+        payment: `Proceed to payment and use ${selectedPaymentMethod} as payment method`,
+        upi: 'Generate a large UPI QR code for payment'
+    };
+
+    safeSendPresetMessage(stepMessages[stepKey] || 'Continue checkout from current stage');
 };
 
 /**

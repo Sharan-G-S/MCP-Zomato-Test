@@ -684,6 +684,172 @@
     box-shadow: 0 8px 24px var(--zomato-red-glow);
 }
 
+.checkout-nav {
+    margin-top: 16px;
+    display: grid;
+    grid-template-columns: repeat(5, minmax(120px, 1fr));
+    gap: 8px;
+}
+
+.checkout-step-btn {
+    border: 1px solid var(--glass-border);
+    background: var(--surface);
+    color: var(--text-secondary);
+    border-radius: 10px;
+    padding: 10px 8px;
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.checkout-step-btn:hover {
+    border-color: var(--glass-border-hover);
+    background: var(--surface-hover);
+}
+
+.checkout-step-btn.active {
+    background: linear-gradient(135deg, var(--zomato-red) 0%, var(--zomato-red-light) 100%);
+    color: white;
+    border-color: transparent;
+}
+
+.offer-section,
+.payment-section {
+    max-width: 760px;
+    margin: 0 auto;
+}
+
+.offer-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 12px;
+}
+
+.offer-card {
+    background: var(--surface);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-md);
+    padding: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.offer-card h4 {
+    margin: 0;
+    color: var(--text-primary);
+    font-size: 15px;
+}
+
+.offer-card p {
+    margin: 6px 0 0;
+    color: var(--text-secondary);
+    font-size: 13px;
+}
+
+.apply-coupon-btn {
+    border: 1px solid rgba(46, 204, 113, 0.45);
+    background: rgba(46, 204, 113, 0.15);
+    color: #77e6a6;
+    border-radius: 10px;
+    padding: 10px 12px;
+    font-size: 13px;
+    font-weight: 700;
+    cursor: pointer;
+}
+
+.offer-empty {
+    background: var(--surface);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-md);
+    padding: 14px;
+    color: var(--text-secondary);
+}
+
+.payment-header h3 {
+    margin: 0;
+    color: var(--text-primary);
+}
+
+.payment-header p {
+    margin: 8px 0 14px;
+    color: var(--text-secondary);
+}
+
+.payment-methods {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 12px;
+}
+
+.payment-method-btn {
+    border: 1px solid var(--glass-border);
+    background: var(--surface);
+    color: var(--text-secondary);
+    border-radius: 999px;
+    padding: 8px 12px;
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+}
+
+.payment-method-btn.active,
+.payment-method-btn:hover {
+    background: rgba(226, 55, 68, 0.2);
+    border-color: rgba(226, 55, 68, 0.6);
+    color: #ffd1d4;
+}
+
+.upi-qr-card {
+    background: var(--surface);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-lg);
+    padding: 18px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+}
+
+.upi-qr-image {
+    width: min(420px, 88vw);
+    height: auto;
+    aspect-ratio: 1 / 1;
+    object-fit: contain;
+    border-radius: 14px;
+    background: white;
+    padding: 12px;
+}
+
+.upi-qr-placeholder {
+    width: min(420px, 88vw);
+    aspect-ratio: 1 / 1;
+    border-radius: 14px;
+    border: 2px dashed var(--glass-border-hover);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 13px;
+    padding: 12px;
+}
+
+.upi-amount {
+    color: var(--text-primary);
+    font-size: 15px;
+    font-weight: 700;
+}
+
+.upi-intent-link {
+    color: #8ac8ff;
+    text-decoration: none;
+    border-bottom: 1px solid rgba(138, 200, 255, 0.4);
+    padding-bottom: 2px;
+}
+
 /* Order Confirmation */
 .order-confirmation {
     max-width: 600px;
@@ -919,5 +1085,191 @@
     .item-image {
         width: 100%;
         height: 180px;
+    }
+
+    .checkout-nav {
+        grid-template-columns: repeat(2, minmax(120px, 1fr));
+    }
+}
+
+/* Address Panel (MCP) */
+.address-panel {
+    margin: 8px 20px 12px;
+    background: var(--surface);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-lg);
+    padding: 14px;
+}
+
+.address-panel-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+}
+
+.address-panel-header h4 {
+    font-size: 14px;
+    color: var(--text-primary);
+    margin: 0;
+}
+
+.address-refresh-btn,
+.address-use-btn {
+    border: 1px solid var(--glass-border-hover);
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+    border-radius: 10px;
+    padding: 6px 10px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.address-refresh-btn:hover,
+.address-use-btn:hover {
+    border-color: var(--zomato-red);
+    color: var(--zomato-red-light);
+    transform: translateY(-1px);
+}
+
+.address-grid,
+.mcp-addresses-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 10px;
+}
+
+.address-card,
+.mcp-address-item {
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-md);
+    padding: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.address-card:hover,
+.mcp-address-item:hover {
+    border-color: var(--glass-border-hover);
+    background: var(--surface-hover);
+}
+
+.address-card-title,
+.mcp-address-head strong {
+    font-size: 12px;
+    color: var(--zomato-red-light);
+}
+
+.address-card-text,
+.mcp-address-item p {
+    margin: 0;
+    font-size: 12px;
+    color: var(--text-secondary);
+    line-height: 1.45;
+}
+
+.mcp-address-head {
+    display: flex;
+    justify-content: space-between;
+    gap: 6px;
+    align-items: center;
+}
+
+.mcp-address-head span {
+    font-size: 10px;
+    color: var(--text-muted);
+}
+
+.mcp-addresses {
+    margin-top: 12px;
+    padding: 12px;
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-md);
+    background: rgba(255, 255, 255, 0.015);
+}
+
+.mcp-addresses-title {
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--text-primary);
+    margin-bottom: 10px;
+}
+
+/* Claude-inspired Ambient Layer */
+body.claude-ambient::after {
+    content: '';
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 0;
+    background:
+        radial-gradient(circle at 15% 22%, rgba(250, 214, 165, 0.11), transparent 40%),
+        radial-gradient(circle at 80% 12%, rgba(255, 179, 138, 0.09), transparent 34%),
+        radial-gradient(circle at 70% 74%, rgba(255, 227, 196, 0.08), transparent 38%);
+    mix-blend-mode: screen;
+    animation: claudeAmbientFloat 16s ease-in-out infinite alternate;
+}
+
+@keyframes claudeAmbientFloat {
+    0% {
+        transform: translate3d(0, 0, 0) scale(1);
+    }
+    100% {
+        transform: translate3d(-1.5%, 1.5%, 0) scale(1.04);
+    }
+}
+
+/* Global loading overlay */
+.global-loading-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 9999;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    background: rgba(5, 6, 12, 0.45);
+    backdrop-filter: blur(4px);
+}
+
+.global-loading-overlay.visible {
+    display: flex;
+}
+
+.global-loading-card {
+    min-width: 220px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    padding: 16px;
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--glass-border-hover);
+    background: var(--surface);
+    box-shadow: var(--shadow-lg);
+}
+
+.loader-ring {
+    width: 34px;
+    height: 34px;
+    border-radius: 50%;
+    border: 3px solid rgba(255, 255, 255, 0.15);
+    border-top-color: var(--zomato-red);
+    animation: spinRing 0.8s linear infinite;
+}
+
+.loader-label {
+    margin: 0;
+    font-size: 13px;
+    color: var(--text-primary);
+    text-align: center;
+}
+
+@keyframes spinRing {
+    to {
+        transform: rotate(360deg);
     }
 }

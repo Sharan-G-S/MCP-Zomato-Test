@@ -1,6 +1,6 @@
 # Zomato AI — MCP App with Native Architecture
 
-> **AI-powered food ordering assistant** with **native MCP Apps architecture** that connects directly to Zomato's MCP server. Built with **OpenAI GPT-4o** and implements the official **Model Context Protocol Apps specification** for seamless browser-to-MCP-server communication.
+> **AI-powered food ordering assistant** with **native MCP Apps architecture** that connects directly to Zomato's MCP server. Built with **Gemini + Groq** and implements the official **Model Context Protocol Apps specification** for seamless browser-to-MCP-server communication.
 
 **Created by:** Sharan G S
 
@@ -37,7 +37,7 @@ Complete Zomato-style interface with:
 -  **Saved Address Management** - Uses your Zomato saved addresses for delivery
 -  **UPI Payment QR Codes** - 600x600px QR codes for easy mobile scanning
 -  **Zomato-Style UI** - Hero images, ratings, reviews, glassmorphism design
--  **Conversational AI** - Natural chat interface with GPT-4o
+-  **Conversational AI** - Natural chat interface with Gemini and Groq fallback
 -  **Native MCP Integration** - Direct browser-to-MCP-server communication
 -  **Fully Responsive** - Works on desktop, tablet, and mobile
 
@@ -59,15 +59,15 @@ Complete Zomato-style interface with:
 │  ├─ /api/mcp/connect    — MCP connection endpoint                │
 │  ├─ /api/mcp/tools      — List available tools                   │
 │  ├─ /api/mcp/call-tool  — Execute MCP tools                      │
-│  ├─ /api/chat           — OpenAI GPT-4o + tool orchestration     │
+│  ├─ /api/chat           — Gemini + Groq tool orchestration       │
 │  ├─ services/mcp.js     — MCP Client via mcp-remote              │
 │  └─ services/chat.js    — AI tool calling logic                  │
 └────────┬─────────────────────────┬───────────────────────────────┘
          │ HTTPS                   │ stdio
          ▼                         ▼
 ┌─────────────────┐    ┌───────────────────────────────────────────┐
-│  OPENAI API     │    │  mcp-remote (npx)                         │
-│  Model: GPT-4o  │    │  ├─ OAuth 2.0 + PKCE handling             │
+│  GEMINI / GROQ  │    │  mcp-remote (npx)                         │
+│  Primary/Fallback│   │  ├─ OAuth 2.0 + PKCE handling             │
 │  Tool Calling   │    │  ├─ Auto browser popup for login          │
 │                 │    │  └─ stdio ↔ HTTP bridge                   │
 └─────────────────┘    └──────────────┬────────────────────────────┘
@@ -103,12 +103,12 @@ Complete Zomato-style interface with:
 |-----------|----------|
 | **MCP Client (Browser)** | Native MCP protocol implementation, event-driven tool execution, real-time updates |
 | **Express.js** | HTTP server, serves frontend, MCP protocol proxy, REST API endpoints |
-| **OpenAI GPT-4o** (`openai` npm) | Natural language understanding, decides which Zomato tools to call, generates formatted responses |
+| **Gemini + Groq** (`openai`-compatible SDK) | Natural language understanding, decides which Zomato tools to call, generates formatted responses |
 | **MCP SDK** (`@modelcontextprotocol/sdk`) | MCP Client that connects to Zomato server, discovers tools, sends tool calls |
 | **mcp-remote** (`npx mcp-remote`) | Proxy that bridges stdio↔HTTP and handles OAuth 2.0 + PKCE since Zomato only whitelists specific redirect URIs |
 | **markdown-it** (CDN) | Renders AI responses as rich markdown — tables, bold, headers, code blocks |
 | **highlight.js** (CDN) | Syntax highlighting inside code blocks in AI responses |
-| **dotenv** | Loads `OPENAI_API_KEY` and `PORT` from `.env` file |
+| **dotenv** | Loads `GEMINI_API_KEY`, `GROQ_API_KEY`, and `PORT` from `.env` file |
 | **uuid** | Generates unique session and chat IDs |
 | **cors** | Enables cross-origin requests for API |
 | **OAuth 2.0 + PKCE** | Secure authentication with Zomato — handled entirely by mcp-remote, auto-opens browser for login |
@@ -132,10 +132,10 @@ Complete Zomato-style interface with:
 1. User sends message (e.g., *"Find top rated Dosa near Koramangala"*)
 2. Frontend adds message to UI → shows typing indicator
 3. Backend receives message → builds chat context with history
-4. Converts MCP tools → OpenAI function-calling format
-5. Calls **GPT-4o** with tools → GPT decides to call `search_restaurants`
+4. Converts MCP tools → OpenAI-compatible function-calling format
+5. Calls **Gemini** with tools → AI decides to call `search_restaurants`
 6. Backend executes tool via MCP Client → receives results
-7. Backend sends tool result back to GPT-4o → generates formatted response
+7. Backend sends tool result back to Gemini/Groq → generates formatted response
 8. Frontend receives response → removes typing indicator
 9. Parses `[[ACTION:...]]` markers → renders interactive buttons
 10. Updates order stage tracker (Search/Menu/Cart/Payment)
@@ -151,19 +151,19 @@ The browser can also call MCP tools directly:
 
 ---
 
-##  Why OpenAI API Key is Essential
+##  Why Gemini + Groq Are Used
 
-**GPT-4o is the "brain"** that understands your requests and decides:
+**Gemini is the primary "brain"** that understands your requests and decides:
 - Which Zomato MCP tools to call (search, menu, cart, order, etc.)
 - How to chain multiple tool calls (search → view menu → add to cart)
 - How to format responses with tables, action buttons, and explanations
 
 **The backend:**
-- Translates MCP tool schemas → OpenAI function-calling format
-- Sends tool execution results back to GPT-4o for interpretation
+- Translates MCP tool schemas → OpenAI-compatible function-calling format
+- Sends tool execution results back to Gemini/Groq for interpretation
 - Maintains conversation context for multi-turn interactions
 
-**Without OpenAI:** You could call MCP tools directly, but you'd lose:
+**Without Gemini or Groq:** You could call MCP tools directly, but you'd lose:
 - Natural language understanding
 - Intelligent tool chaining
 - Context-aware conversations
@@ -176,7 +176,8 @@ The browser can also call MCP tools directly:
 ### Prerequisites
 - Node.js 18+
 - npm
-- OpenAI API key with GPT-4o access
+- Gemini API key
+- Groq API key
 
 ### Clone and Install
 
@@ -188,8 +189,9 @@ cd MCP-Zomato
 # Install dependencies
 npm install
 
-# Create .env file with your OpenAI API key
-echo "OPENAI_API_KEY=your-openai-api-key-here" > .env
+# Create .env file with your Gemini and Groq API keys
+echo "GEMINI_API_KEY=your-gemini-api-key-here" > .env
+echo "GROQ_API_KEY=your-groq-api-key-here" >> .env
 echo "PORT=3000" >> .env
 ```
 
@@ -331,7 +333,7 @@ async function handleActionClick(action) {
 
 ## 📁 Project Structure
 
-**The OpenAI API Key powers ALL the intelligent features of this application.** Without it, there is no AI assistant!
+**Gemini and Groq power the intelligent features of this application.** Without at least one configured provider, there is no AI assistant.
 
 ### What the API Key Enables:
 -  **Natural Language Understanding** - Converts your casual requests like "I want cheap biryani nearby" into structured tool calls
@@ -343,13 +345,13 @@ async function handleActionClick(action) {
 -  **Offer Optimization** - Analyzes available discounts and recommends the best savings
 
 ### How It Works:
-1. Your message goes to **GPT-4o** (via OpenAI API)
-2. GPT-4o analyzes your intent with a 365-line system prompt containing 10 comprehensive rules
-3. GPT-4o decides which Zomato MCP tools to call (search_restaurants, get_menu, add_to_cart, etc.)
-4. GPT-4o maintains conversation context across multiple turns
-5. GPT-4o formats the response with markdown, tables, and action buttons
+1. Your message goes to **Gemini** first, with **Groq** as fallback
+2. The model analyzes your intent with a detailed system prompt containing ordering and checkout rules
+3. It decides which Zomato MCP tools to call (search_restaurants, get_menu, add_to_cart, etc.)
+4. It maintains conversation context across multiple turns
+5. It formats the response with markdown, tables, and action buttons
 
-**Cost:** OpenAI charges per token. Typical conversation costs ₹5-20 depending on complexity. You can monitor usage at [platform.openai.com](https://platform.openai.com).
+**Cost:** Gemini and Groq both charge by model usage. Monitor the provider you configure in your respective console.
 
 ---
 
@@ -387,13 +389,13 @@ MCP-Zomato/
 ├── routes/api.js          # All REST API endpoints
 ├── services/
 │   ├── mcp.js             # MCP Client + mcp-remote connection
-│   ├── chat.js            # OpenAI GPT-4o + tool calling loop
+│   ├── chat.js            # Gemini + Groq tool calling loop
 │   └── storage.js         # JSON file chat persistence
 ├── public/
 │   ├── index.html         # Dashboard layout + step tracker
 │   ├── style.css          # Glassmorphism design (~1300 lines)
 │   └── app.js             # Action buttons, chips, step tracker logic
-├── .env                   # OPENAI_API_KEY, PORT
+├── .env                   # GEMINI_API_KEY, GROQ_API_KEY, PORT
 └── package.json           # Dependencies
 ```
 
@@ -403,7 +405,8 @@ MCP-Zomato/
 
 ### Prerequisites
 - **Node.js** (v18 or higher)
-- **OpenAI API Key** ⚡ **REQUIRED** - This is what makes the AI smart! Get from [platform.openai.com](https://platform.openai.com)
+- **Gemini API Key** ⚡ **REQUIRED** - Primary provider for chat orchestration
+- **Groq API Key** - Fallback provider for fast responses
 - **Internet connection** (for MCP OAuth and API calls)
 
 ### Quick Start
@@ -416,8 +419,8 @@ cd MCP-Zomato
 # 2. Install dependencies
 npm install
 
-# 3.  YOUR API KEY IS ALREADY CONFIGURED!
-# The .env file contains your OpenAI API key
+# 3.  ADD YOUR API KEYS TO .env
+# The .env file should contain your Gemini and Groq keys
 # You can verify by checking: cat .env
 
 # 4. Start the server
@@ -428,7 +431,7 @@ npm start
 # Click "Connect to Zomato" → complete OAuth login → start ordering!
 ```
 
-**Note:** Your OpenAI API key is stored in `.env` file which is ignored by Git for security. Never share this file!
+**Note:** Your provider keys are stored in `.env` which should stay ignored by Git. Never share this file.
 
 ### Data Storage
 - **Chat History**: All conversations are stored in `chat_history.json` in the project root
@@ -450,7 +453,7 @@ npm test               # Run tests (if configured)
 |----------|-----|
 | MCP Client (not server) | Zomato hosts the server — we consume their tools |
 | mcp-remote proxy | Zomato whitelists specific OAuth URIs only — mcp-remote handles this |
-| GPT-4o tool calling | Function calling maps naturally to MCP tools |
+| Gemini/Groq tool calling | Function calling maps naturally to MCP tools |
 | `[[ACTION:...]]` markers | AI responses become interactive with clickable buttons |
 | Vanilla frontend | No build tools needed — glassmorphism CSS + markdown-it for premium feel |
 | JSON file storage | Simple persistence, no database dependency |
@@ -463,14 +466,14 @@ npm test               # Run tests (if configured)
 MCP-Zomato/
 ├── server.js                 # Main Express server
 ├── package.json              # Dependencies and scripts
-├── .env                      # Environment variables (OPENAI_API_KEY)
+├── .env                      # Environment variables (GEMINI_API_KEY, GROQ_API_KEY)
 ├── chat_history.json         # Persisted chat history
 ├── README.md                 # This file
 ├── routes/
 │   └── api.js               # REST + MCP proxy endpoints
 ├── services/
 │   ├── mcp.js               # MCP Client (backend)
-│   ├── chat.js              # OpenAI GPT-4o integration
+│   ├── chat.js              # Gemini + Groq integration
 │   └── storage.js           # JSON chat persistence
 └── public/                  # Frontend (served as static files)
     ├── index.html           # Single-page app with landing
@@ -506,20 +509,18 @@ Create a `.env` file in the root directory:
 
 ```bash
 # Required
-OPENAI_API_KEY=sk-your-openai-api-key-here
+GEMINI_API_KEY=your-gemini-api-key-here
+GROQ_API_KEY=your-groq-api-key-here
 
 # Optional
 PORT=3000
 ```
 
-### OpenAI API Key
+### Provider API Keys
 
-1. Go to [platform.openai.com](https://platform.openai.com)
-2. Create an account or sign in
-3. Navigate to API Keys section
-4. Create a new API key
-5. Copy and paste it into your `.env` file
-6. Make sure you have credits or a valid payment method
+1. Create or copy your Gemini API key and place it in `.env`
+2. Add your Groq API key as fallback in `.env`
+3. Restart the server after changing provider keys
 
 ---
 
@@ -535,8 +536,8 @@ PORT=3000
 - **No GPS permission**: Go to browser settings → Privacy → Location → Allow for localhost
 
 ### API Issues
-- **"OpenAI API key not configured"**: Make sure you added it correctly in `.env` file
-- **Rate limit errors**: You've exceeded OpenAI API quota - check your usage at platform.openai.com
+- **"AI provider not configured"**: Make sure `GEMINI_API_KEY` or `GROQ_API_KEY` is present in `.env`
+- **Rate limit errors**: Check your Gemini or Groq quota and usage dashboard
 - **Restaurant offline**: The AI will automatically suggest alternative restaurants
 
 ### Data Issues
@@ -549,7 +550,7 @@ PORT=3000
 For **testing purposes only**. Per Zomato: *"Third party apps on Zomato MCP are not allowed due to security and legal considerations."*
 
 
-**Built with** Node.js · Express · OpenAI GPT-4o · MCP Protocol · Zomato MCP Server
+**Built with** Node.js · Express · Gemini + Groq · MCP Protocol · Zomato MCP Server
 
 
 # Sharan G S
