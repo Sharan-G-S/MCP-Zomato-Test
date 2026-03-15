@@ -392,6 +392,69 @@ function clearToolsList() {
     if (toolsList) toolsList.innerHTML = '<div class="no-tools">Not connected</div>';
 }
 
+async function ensureMcpConnected(options = {}) {
+    const {
+        silent = false,
+        timeoutMs = 30000,
+        loadingLabel = 'Connecting to Zomato MCP...'
+    } = options;
+
+    if (isConnected || mcpClient.getStatus().connected) {
+        isConnected = true;
+        return true;
+    }
+
+    if (!silent) {
+        showNotification('Connecting to Zomato MCP...', 'info');
+        setGlobalLoading(true, loadingLabel);
+    }
+
+    try {
+        await connectToMCPServer();
+
+        const startedAt = Date.now();
+        while (!isConnected && Date.now() - startedAt < timeoutMs) {
+            await new Promise((resolve) => setTimeout(resolve, 400));
+            isConnected = mcpClient.getStatus().connected;
+        }
+
+        if (!isConnected) {
+            if (!silent) {
+                showNotification('Unable to connect to MCP. Please click Connect to Zomato and try again.', 'error');
+            }
+            return false;
+        }
+
+        return true;
+    } catch (error) {
+        console.error('[MCP] ensure connection failed:', error);
+        if (!silent) {
+            showNotification(`MCP connection failed: ${error.message}`, 'error');
+        }
+        return false;
+    } finally {
+        if (!silent) {
+            setGlobalLoading(false);
+        }
+    }
+}
+
+function extractToolResultPayload(result) {
+    if (result?.structuredContent?.result) return result.structuredContent.result;
+    if (result?.structuredContent) return result.structuredContent;
+
+    if (Array.isArray(result?.content) && result.content.length > 0) {
+        const joined = result.content.map((entry) => entry.text || JSON.stringify(entry)).join('\n');
+        try {
+            return JSON.parse(joined);
+        } catch {
+            return { raw: joined };
+        }
+    }
+
+    return result || {};
+}
+
 // =============================================================
 // CHAT FUNCTIONS (with MCP integration)
 // =============================================================
@@ -405,27 +468,40 @@ function handleSubmit(event) {
     }
 }
 
+function isRestaurantSearchQuery(message) {
+    return /(find|search|best|top|nearby|near me|restaurant|restaurants|biryani|dosa|pizza|burger|healthy|offers?)/i.test(message || '');
+}
+
+function showRestaurantSkeletonLoader() {
+    if (!messagesArea) return null;
+
+    const id = `rest-skeleton-${Date.now()}`;
+    const wrapper = document.createElement('div');
+    wrapper.id = id;
+    wrapper.className = 'restaurant-skeleton-wrap';
+    wrapper.innerHTML = `
+        <div class="restaurant-skeleton-card"></div>
+        <div class="restaurant-skeleton-card"></div>
+        <div class="restaurant-skeleton-card"></div>
+    `;
+
+    messagesArea.appendChild(wrapper);
+    scrollToBottom();
+    return id;
+}
+
+function hideSkeletonLoader(loaderId) {
+    if (!loaderId) return;
+    const el = document.getElementById(loaderId);
+    if (el) el.remove();
+}
+
 async function sendMessage(message) {
     if (!message || !message.trim()) return;
     if (isSending) return;
     
-    // Auto-connect if not connected
-    if (!isConnected) {
-        showNotification('Connecting to Zomato MCP...', 'info');
-        await connectToMCPServer();
-        
-        // Wait a bit for connection to establish
-        let attempts = 0;
-        while (!isConnected && attempts < 30) {
-            await new Promise(resolve => setTimeout(resolve, 1000));
-            attempts++;
-        }
-        
-        if (!isConnected) {
-            showNotification('Failed to connect. Please try clicking "Connect to Zomato" button.', 'error');
-            return;
-        }
-    }
+    const ready = await ensureMcpConnected({ timeoutMs: 30000 });
+    if (!ready) return;
     
     isSending = true;
     setGlobalLoading(true, 'Processing your request...');
@@ -439,6 +515,7 @@ async function sendMessage(message) {
     
     // Show typing indicator
     const typingId = showTypingIndicator();
+    const skeletonId = isRestaurantSearchQuery(message) ? showRestaurantSkeletonLoader() : null;
     
     try {
         // Send to backend for OpenAI processing with MCP tools
@@ -458,6 +535,7 @@ async function sendMessage(message) {
         
         // Remove typing indicator
         removeTypingIndicator(typingId);
+        hideSkeletonLoader(skeletonId);
         
         if (data.error) {
             throw new Error(data.error);
@@ -474,6 +552,7 @@ async function sendMessage(message) {
     } catch (error) {
         console.error('[Chat] Error:', error);
         removeTypingIndicator(typingId);
+        hideSkeletonLoader(skeletonId);
         addMessageToUI('error', `Sorry, an error occurred: ${error.message}`);
         showNotification('Failed to send message', 'error');
     } finally {
@@ -1119,6 +1198,16 @@ function updateStepTracker() {
             step.classList.remove('active', 'completed');
         }
     });
+
+    updateCheckoutLayout();
+}
+
+function updateCheckoutLayout() {
+    const dashboard = document.getElementById('app');
+    if (!dashboard) return;
+
+    const inCheckoutFlow = ['cart', 'offers', 'payment'].includes(currentOrderStage);
+    dashboard.classList.toggle('checkout-mode', inCheckoutFlow);
 }
 
 function scrollToBottom() {
@@ -1555,12 +1644,80 @@ window.viewRestaurantMenu = async function(restaurantId, restaurantName) {
     if (window.ZomatoUI) {
         window.ZomatoUI.selectedRestaurant = { id: restaurantId, name: restaurantName };
     }
-    
-    // Send message to get menu
-    const message = `Show me the menu for restaurant ${restaurantName || restaurantId}`;
-    if (messageInput) {
-        messageInput.value = message;
-        sendMessage(message);
+
+    const connected = await ensureMcpConnected({ timeoutMs: 30000, loadingLabel: 'Opening restaurant menu...' });
+    if (!connected) {
+        const fallbackMessage = `Show me the menu for restaurant ${restaurantName || restaurantId}`;
+        safeSendPresetMessage(fallbackMessage);
+        return;
+    }
+
+    setGlobalLoading(true, 'Fetching menu...');
+    try {
+        const numericId = Number(restaurantId);
+        const menuArgsCandidates = [];
+
+        if (!Number.isNaN(numericId) && numericId > 0) {
+            menuArgsCandidates.push({ res_id: numericId });
+            menuArgsCandidates.push({ restaurant_id: numericId });
+        }
+
+        if (restaurantId !== undefined && restaurantId !== null && String(restaurantId).trim() !== '') {
+            menuArgsCandidates.push({ res_id: String(restaurantId) });
+            menuArgsCandidates.push({ restaurant_id: String(restaurantId) });
+        }
+
+        if (restaurantName) {
+            menuArgsCandidates.push({ restaurant_name: restaurantName });
+        }
+
+        let menuResult = null;
+        let usedArgs = null;
+        let lastError = null;
+
+        for (const args of menuArgsCandidates) {
+            try {
+                menuResult = await mcpClient.callTool('get_menu_items_listing', args);
+                usedArgs = args;
+                break;
+            } catch (error) {
+                lastError = error;
+            }
+        }
+
+        if (!menuResult) {
+            throw lastError || new Error('Failed to fetch menu');
+        }
+
+        const payload = extractToolResultPayload(menuResult);
+        const menuData = {
+            ...(payload || {}),
+            restaurant: payload?.restaurant || { id: restaurantId, name: restaurantName },
+            restaurant_name: payload?.restaurant_name || restaurantName
+        };
+
+        addMessageToUI('assistant', `## Menu for **${restaurantName || 'Selected restaurant'}**\n\nChoose dishes below to continue checkout.`, [
+            {
+                id: `menu-${Date.now()}`,
+                name: 'get_menu_items_listing',
+                args: usedArgs || {},
+                status: 'success',
+                data: menuData
+            }
+        ], {
+            type: 'menu',
+            data: menuData
+        });
+
+        conversationHistory.push({ role: 'assistant', content: `Menu loaded for ${restaurantName || 'restaurant'}` });
+        currentOrderStage = 'menu';
+        updateStepTracker();
+    } catch (error) {
+        console.error('[Menu] Direct MCP menu load failed:', error);
+        showNotification('Could not load menu directly. Falling back to AI flow.', 'error');
+        safeSendPresetMessage(`Show me the menu for restaurant ${restaurantName || restaurantId}`);
+    } finally {
+        setGlobalLoading(false);
     }
 };
 
@@ -1695,15 +1852,27 @@ window.updateQuantity = function(itemId, delta, itemName = 'this item') {
 window.proceedToCheckout = function() {
     console.log('[Cart] Proceed to checkout');
 
-    safeSendPresetMessage('Proceed to payment and checkout with my current cart');
+    ensureMcpConnected({ timeoutMs: 30000, loadingLabel: 'Preparing checkout...' })
+        .then((connected) => {
+            if (!connected) return;
+            currentOrderStage = 'offers';
+            updateStepTracker();
+            safeSendPresetMessage('Show available coupons and apply the best coupon to my cart, then continue checkout');
+        });
 };
 
 window.applyCoupon = function(couponCode = '') {
     console.log('[Offers] Apply coupon:', couponCode);
-    safeSendPresetMessage(couponCode
-        ? `Apply coupon code ${couponCode} to my cart and show updated total`
-        : 'Show available coupons and apply the best coupon to my cart'
-    );
+    ensureMcpConnected({ timeoutMs: 30000, loadingLabel: 'Applying coupon...' })
+        .then((connected) => {
+            if (!connected) return;
+            currentOrderStage = 'offers';
+            updateStepTracker();
+            safeSendPresetMessage(couponCode
+                ? `Apply coupon code ${couponCode} to my cart and show updated total`
+                : 'Show available coupons and apply the best coupon to my cart'
+            );
+        });
 };
 
 window.selectPaymentMethod = function(method = 'UPI') {
@@ -1714,45 +1883,70 @@ window.selectPaymentMethod = function(method = 'UPI') {
         button.classList.toggle('active', button.textContent.trim().toLowerCase() === String(method).toLowerCase());
     });
 
-    safeSendPresetMessage(`Use ${method} as my payment method and continue checkout`);
+    ensureMcpConnected({ timeoutMs: 30000, loadingLabel: 'Setting payment method...' })
+        .then((connected) => {
+            if (!connected) return;
+            currentOrderStage = 'payment';
+            updateStepTracker();
+            safeSendPresetMessage(`Use ${method} as my payment method and continue checkout`);
+        });
 };
 
 window.openCheckoutStep = function(step) {
     const stepKey = String(step || '').toLowerCase();
 
-    if (stepKey === 'dish') {
-        const firstVisibleAddButton = Array.from(document.querySelectorAll('.menu-item .add-btn'))
-            .find((button) => {
-                const menuItem = button.closest('.menu-item');
-                if (!menuItem) return false;
-                return window.getComputedStyle(menuItem).display !== 'none';
-            });
+    ensureMcpConnected({ timeoutMs: 30000, loadingLabel: 'Loading checkout step...' })
+        .then((connected) => {
+            if (!connected) return;
 
-        if (firstVisibleAddButton) {
-            firstVisibleAddButton.click();
-            showNotification('Selected a dish and added it to cart', 'success');
-            return;
-        }
+            if (stepKey === 'dish') {
+                const firstVisibleAddButton = Array.from(document.querySelectorAll('.menu-item .add-btn'))
+                    .find((button) => {
+                        const menuItem = button.closest('.menu-item');
+                        if (!menuItem) return false;
+                        return window.getComputedStyle(menuItem).display !== 'none';
+                    });
 
-        const restaurantName = window.ZomatoUI?.selectedRestaurant?.name || '';
-        const fallbackMessage = restaurantName
-            ? `Show me popular dishes from ${restaurantName} with prices and add one bestseller to my cart`
-            : 'Show me popular dishes with prices and add one bestseller to my cart';
+                if (firstVisibleAddButton) {
+                    firstVisibleAddButton.click();
+                    currentOrderStage = 'cart';
+                    updateStepTracker();
+                    showNotification('Selected a dish and added it to cart', 'success');
+                    return;
+                }
 
-        showNotification('No visible dishes yet. Fetching dish options...', 'info');
-        safeSendPresetMessage(fallbackMessage);
-        return;
-    }
+                const restaurantName = window.ZomatoUI?.selectedRestaurant?.name || '';
+                const fallbackMessage = restaurantName
+                    ? `Show me popular dishes from ${restaurantName} with prices and add one bestseller to my cart`
+                    : 'Show me popular dishes with prices and add one bestseller to my cart';
 
-    const stepMessages = {
-        menu: 'Show me the menu of my selected restaurant',
-        dish: 'Show me popular dishes and add one to my cart',
-        coupon: 'Show available coupons and apply the best coupon to my cart',
-        payment: `Proceed to payment and use ${selectedPaymentMethod} as payment method`,
-        upi: 'Generate a large UPI QR code for payment'
-    };
+                currentOrderStage = 'menu';
+                updateStepTracker();
+                showNotification('No visible dishes yet. Fetching dish options...', 'info');
+                safeSendPresetMessage(fallbackMessage);
+                return;
+            }
 
-    safeSendPresetMessage(stepMessages[stepKey] || 'Continue checkout from current stage');
+            const stepMessages = {
+                menu: 'Show me the menu of my selected restaurant',
+                dish: 'Show me popular dishes and add one to my cart',
+                coupon: 'Show available coupons and apply the best coupon to my cart',
+                payment: `Proceed to payment and use ${selectedPaymentMethod} as payment method`,
+                upi: 'Generate a large UPI QR code for payment'
+            };
+
+            const stageByStep = {
+                menu: 'menu',
+                dish: 'menu',
+                coupon: 'offers',
+                payment: 'payment',
+                upi: 'payment'
+            };
+
+            currentOrderStage = stageByStep[stepKey] || currentOrderStage;
+            updateStepTracker();
+            safeSendPresetMessage(stepMessages[stepKey] || 'Continue checkout from current stage');
+        });
 };
 
 /**
@@ -1761,6 +1955,32 @@ window.openCheckoutStep = function(step) {
 window.trackOrder = function(orderId) {
     console.log('[Order] Track order:', orderId);
     safeSendPresetMessage(`Track my order ${orderId}`);
+};
+
+window.openHomeTab = function() {
+    document.querySelectorAll('.bottom-nav-item').forEach((item, idx) => item.classList.toggle('active', idx === 0));
+    if (messagesArea) {
+        messagesArea.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+    showNotification('Home', 'info');
+};
+
+window.openSearchTab = function() {
+    document.querySelectorAll('.bottom-nav-item').forEach((item, idx) => item.classList.toggle('active', idx === 1));
+    if (messageInput) {
+        messageInput.focus();
+    }
+    showNotification('Search ready', 'info');
+};
+
+window.openOrdersTab = function() {
+    document.querySelectorAll('.bottom-nav-item').forEach((item, idx) => item.classList.toggle('active', idx === 2));
+    safeSendPresetMessage('Show my active orders and latest order status');
+};
+
+window.openProfileTab = function() {
+    document.querySelectorAll('.bottom-nav-item').forEach((item, idx) => item.classList.toggle('active', idx === 3));
+    safeSendPresetMessage('Show my saved addresses and profile preferences for checkout');
 };
 
 console.log('[Zomato UI Handlers] Interactive handlers loaded');
