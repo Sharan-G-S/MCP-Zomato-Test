@@ -8,7 +8,8 @@
     "start": "node server.js",
     "dev": "node server.js",
     "build:client": "npm run build:client",
-    "smoke": "node scripts/smoke-check.mjs"
+    "smoke": "node scripts/smoke-check.mjs",
+    "journey:test": "node scripts/mcp-journey-test.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.1",

@@ -1954,6 +1954,10 @@ body::before {
     overflow-x: auto;
 }
 
+.step-tracker::-webkit-scrollbar {
+    height: 0;
+}
+
 .step-tracker .step {
     display: flex;
     align-items: center;
@@ -2404,19 +2408,58 @@ body::before {
 
 .zc-tag {
     font-size: 11px;
+        height: 56px;
     padding: 2px 7px;
     border-radius: 4px;
     background: rgba(255, 255, 255, 0.04);
-    color: var(--text-secondary);
+        position: sticky;
+        bottom: 64px;
+        z-index: 18;
+        padding: 8px 12px 10px;
+        background: linear-gradient(180deg, rgba(6, 6, 12, 0) 0%, rgba(6, 6, 12, 0.9) 35%);
+        backdrop-filter: blur(8px);
     border: 1px solid rgba(255, 255, 255, 0.04);
 }
 
-/* Rating Stars */
+        padding: 16px 12px 88px;
 .zc-stars {
     font-size: 12px;
     display: inline-flex;
     align-items: center;
     gap: 1px;
+
+    .step-tracker {
+        position: sticky;
+        top: 56px;
+        z-index: 15;
+        justify-content: flex-start;
+        padding: 8px 10px;
+        gap: 4px;
+    }
+
+    .step-tracker .step {
+        padding: 6px 10px;
+        font-size: 10px;
+    }
+
+    .step-tracker .step .step-icon {
+        width: 22px;
+        height: 22px;
+    }
+
+    .step-tracker .step-line {
+        width: 14px;
+    }
+
+    .btn-connect,
+    .btn-cart,
+    .action-btn.send {
+        min-height: 40px;
+    }
+
+    .input-box input {
+        font-size: 16px;
+    }
 }
 
 .star-filled {
