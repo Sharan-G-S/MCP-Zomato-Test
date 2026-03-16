@@ -294,3 +294,63 @@ This brings the application in line with MCP best practices and provides a found
 **Implementation Date:** March 10, 2026
 **Version:** 2.0.0
 **Architecture:** MCP Apps (Native)
+
+## Claude Desktop Interactive UI Setup (Zomato)
+
+This repository now includes a host-facing MCP server for interactive UI rendering inside MCP hosts like Claude Desktop.
+
+### Added Script
+
+- `scripts/claude-host-zomato-mcp.mjs`
+
+This server exposes:
+
+1. `zomato_search_ui`
+- Executes a natural-language restaurant search via your existing backend (`/api/chat`)
+- Returns structured restaurant cards
+- Uses `openai/outputTemplate` metadata to render an interactive widget
+
+2. `zomato_menu_ui`
+- Loads menu for a specific restaurant via your backend
+- Returns structured menu items
+- Renders inside the same interactive widget template
+
+3. Resource template
+- `ui://widget/zomato-interactive.html`
+- Interactive card UI with filters and quick actions
+
+### Run It
+
+```bash
+npm run mcp:claude
+```
+
+Keep your web backend running as well:
+
+```bash
+npm start
+```
+
+### Claude Desktop Config Example
+
+Add an MCP server entry (stdio transport) pointing to this script:
+
+```json
+{
+   "mcpServers": {
+      "zomato-interactive-ui": {
+         "command": "node",
+         "args": ["/Users/sharan/Desktop/September-AI/MCP-Zomato/scripts/claude-host-zomato-mcp.mjs"],
+         "env": {
+            "ZOMATO_WEB_API_BASE": "http://localhost:3000"
+         }
+      }
+   }
+}
+```
+
+### Notes
+
+- This MCP host server relies on the existing web backend routes (`/api/session`, `/api/chats/new`, `/api/chat`).
+- For real restaurant/menu data, your backend must be connected/authenticated to Zomato MCP (OAuth flow completed).
+- If not connected, tools still run but may return empty structured cards depending on backend state.

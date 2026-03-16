@@ -9,7 +9,8 @@
     "dev": "node server.js",
     "build:client": "npm run build:client",
     "smoke": "node scripts/smoke-check.mjs",
-    "journey:test": "node scripts/mcp-journey-test.mjs"
+    "journey:test": "node scripts/mcp-journey-test.mjs",
+    "mcp:claude": "node scripts/claude-host-zomato-mcp.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.1",

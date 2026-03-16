@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Zomato Interactive Widget</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #0f1115;
+      --card: #171b22;
+      --text: #e8ecf1;
+      --muted: #9ea7b3;
+      --accent: #e23744;
+      --accent-soft: rgba(226, 55, 68, 0.16);
+      --border: rgba(255, 255, 255, 0.12);
+    }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      padding: 14px;
+    }
+    .head {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      align-items: baseline;
+      margin-bottom: 10px;
+    }
+    .title { font-weight: 700; font-size: 16px; }
+    .muted { color: var(--muted); font-size: 12px; }
+    .chips { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+    .chip {
+      border: 1px solid var(--border);
+      background: transparent;
+      border-radius: 999px;
+      color: var(--text);
+      padding: 6px 10px;
+      font-size: 12px;
+      cursor: pointer;
+    }
+    .chip.active {
+      background: var(--accent-soft);
+      border-color: rgba(226, 55, 68, 0.5);
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+      gap: 10px;
+    }
+    .card {
+      border: 1px solid var(--border);
+      background: var(--card);
+      border-radius: 12px;
+      padding: 12px;
+    }
+    .name { font-weight: 700; font-size: 14px; line-height: 1.3; }
+    .meta { color: var(--muted); font-size: 12px; margin: 6px 0 10px; }
+    .btn {
+      width: 100%;
+      border: 1px solid rgba(226, 55, 68, 0.5);
+      background: var(--accent-soft);
+      color: #ffd9dc;
+      border-radius: 8px;
+      padding: 8px;
+      font-weight: 700;
+      font-size: 12px;
+      cursor: pointer;
+    }
+    .section { margin-top: 12px; }
+    .menu-item {
+      border-bottom: 1px dashed var(--border);
+      padding: 8px 0;
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      font-size: 13px;
+    }
+    .menu-item:last-child { border-bottom: 0; }
+    .empty {
+      border: 1px dashed var(--border);
+      border-radius: 10px;
+      padding: 14px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+  </style>
+</head>
+<body>
+  <div id="app"></div>
+  <script>
+    const output =
+      (window.openai && (window.openai.toolOutput || window.openai.output || window.openai.initialData)) ||
+      window.__MCP_TOOL_OUTPUT__ || {};
+
+    const data = output.structuredContent || output || {};
+    const view = data.view || 'restaurants';
+
+    function renderRestaurants(restaurants) {
+      const app = document.getElementById('app');
+      if (!Array.isArray(restaurants) || restaurants.length === 0) {
+        app.innerHTML = '<div class="empty">No restaurants available in this result.</div>';
+        return;
+      }
+
+      app.innerHTML =
+        '<div class="head">' +
+          '<div class="title">Restaurants</div>' +
+          '<div class="muted">' + restaurants.length + ' results</div>' +
+        '</div>' +
+        '<div class="chips">' +
+          '<button class="chip active" data-filter="all">All</button>' +
+          '<button class="chip" data-filter="top">Top Rated</button>' +
+          '<button class="chip" data-filter="fast">Fast Delivery</button>' +
+        '</div>' +
+        '<div class="grid" id="grid">' +
+          restaurants.map(function(r, idx) {
+            return '<div class="card" data-rating="' + Number(r.rating || 0) + '" data-delivery="' + String(r.deliveryTime || '') + '">' +
+              '<div class="name">' + (r.name || ('Restaurant ' + (idx + 1))) + '</div>' +
+              '<div class="meta">Rating: ' + (r.rating || 'N/A') + ' | ' + (r.deliveryTime || 'N/A') + ' | INR ' + (r.costForTwo || 'N/A') + ' for two</div>' +
+              '<button class="btn" data-name="' + String(r.name || '').replace(/"/g, '&quot;') + '">View Menu in Chat</button>' +
+            '</div>';
+          }).join('') +
+        '</div>';
+
+      app.querySelectorAll('.chip').forEach(function(chip) {
+        chip.addEventListener('click', function() {
+          app.querySelectorAll('.chip').forEach(function(c) { c.classList.remove('active'); });
+          chip.classList.add('active');
+          const mode = chip.getAttribute('data-filter');
+          const cards = app.querySelectorAll('.card');
+          cards.forEach(function(card) {
+            const rating = Number(card.getAttribute('data-rating') || 0);
+            const deliveryText = card.getAttribute('data-delivery') || '';
+            const deliveryMinutes = Number((deliveryText.match(/\d+/) || [999])[0]);
+            let visible = true;
+            if (mode === 'top') visible = rating >= 4;
+            if (mode === 'fast') visible = deliveryMinutes <= 30;
+            card.style.display = visible ? 'block' : 'none';
+          });
+        });
+      });
+
+      app.querySelectorAll('.btn').forEach(function(btn) {
+        btn.addEventListener('click', async function() {
+          const name = btn.getAttribute('data-name') || 'this restaurant';
+          if (window.openai && typeof window.openai.emitEvent === 'function') {
+            await window.openai.emitEvent({ type: 'assistant-suggestion', text: 'Show me the menu for restaurant ' + name });
+          }
+        });
+      });
+    }
+
+    function renderMenu(menu) {
+      const app = document.getElementById('app');
+      const restaurantName = menu.restaurantName || (menu.restaurant && menu.restaurant.name) || 'Selected restaurant';
+      const items = Array.isArray(menu.items) ? menu.items : [];
+
+      app.innerHTML =
+        '<div class="head">' +
+          '<div class="title">Menu - ' + restaurantName + '</div>' +
+          '<div class="muted">' + items.length + ' items</div>' +
+        '</div>' +
+        '<div class="section">' +
+          (items.length
+            ? items.slice(0, 20).map(function(item) {
+                return '<div class="menu-item"><span>' + (item.name || 'Item') + '</span><strong>INR ' + (item.price || 'N/A') + '</strong></div>';
+              }).join('')
+            : '<div class="empty">No menu items available in this response.</div>') +
+        '</div>';
+    }
+
+    if (view === 'menu') {
+      renderMenu(data);
+    } else {
+      renderRestaurants(data.restaurants || []);
+    }
+  </script>
+</body>
+</html>
