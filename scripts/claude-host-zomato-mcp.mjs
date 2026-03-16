@@ -90,9 +90,7 @@ async function createSessionAndChat(apiBaseUrl) {
   return { sessionId, chatId: chatData.chatId };
 }
 
-async function callChat(apiBaseUrl, message, history = []) {
-  const { sessionId, chatId } = await createSessionAndChat(apiBaseUrl);
-
+async function sendChatMessage(apiBaseUrl, sessionId, chatId, message, history = []) {
   const res = await fetch(`${apiBaseUrl}/api/chat`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -109,6 +107,110 @@ async function callChat(apiBaseUrl, message, history = []) {
   }
 
   return res.json();
+}
+
+async function callChat(apiBaseUrl, message, history = []) {
+  const { sessionId, chatId } = await createSessionAndChat(apiBaseUrl);
+  return sendChatMessage(apiBaseUrl, sessionId, chatId, message, history);
+}
+
+function extractQrUrlFromText(text) {
+  const value = String(text || '');
+  const match = value.match(/https?:\/\/[^\s)]+(?:qr|qrcode|upi)[^\s)]*/i);
+  return match ? match[0] : '';
+}
+
+function pickCheckoutFromChatResponse(chatResponse) {
+  const toolCalls = Array.isArray(chatResponse?.toolCalls) ? chatResponse.toolCalls : [];
+
+  const cartCall = toolCalls.find(
+    (call) => /(get_cart|add_to_cart|create_cart)/i.test(call?.name || '') && call?.status === 'success' && call?.data
+  );
+
+  const offersCall = toolCalls.find(
+    (call) => /(offer|coupon|discount)/i.test(call?.name || '') && call?.status === 'success' && call?.data
+  );
+
+  const paymentCall = toolCalls.find(
+    (call) => /(payment|upi|qr|checkout)/i.test(call?.name || '') && call?.status === 'success' && call?.data
+  );
+
+  const cartData = cartCall?.data || {};
+  const paymentData = paymentCall?.data || {};
+  const offersData = offersCall?.data || {};
+
+  const qrUrl =
+    paymentData?.qr_url ||
+    paymentData?.qrUrl ||
+    paymentData?.qr_code_url ||
+    paymentData?.qrCodeUrl ||
+    paymentData?.upi_qr ||
+    paymentData?.upiQr ||
+    paymentData?.payment_qr ||
+    paymentData?.paymentQr ||
+    extractQrUrlFromText(chatResponse?.response || '');
+
+  const items =
+    cartData?.items ||
+    cartData?.cart?.items ||
+    paymentData?.items ||
+    [];
+
+  const offers =
+    offersData?.offers ||
+    offersData?.coupons ||
+    offersData?.available_offers ||
+    [];
+
+  const total =
+    cartData?.total ||
+    cartData?.cart?.total ||
+    paymentData?.amount ||
+    paymentData?.total ||
+    null;
+
+  return {
+    cart: {
+      items: Array.isArray(items) ? items : [],
+      total
+    },
+    offers: Array.isArray(offers) ? offers : [],
+    payment: {
+      method: 'UPI',
+      qrUrl,
+      amount: total,
+      upiIntent: paymentData?.upi_intent || paymentData?.upiIntent || paymentData?.payment_link || paymentData?.paymentLink || ''
+    }
+  };
+}
+
+async function buildCheckoutFlow(apiBaseUrl, restaurant, dish) {
+  const { sessionId, chatId } = await createSessionAndChat(apiBaseUrl);
+
+  const history = [];
+  const prompts = [];
+
+  if (restaurant && dish) {
+    prompts.push(`Show me the menu for restaurant ${restaurant} and add one ${dish} to my cart`);
+  } else if (restaurant) {
+    prompts.push(`Show me the menu for restaurant ${restaurant} and add one popular item to my cart`);
+  } else if (dish) {
+    prompts.push(`Add one ${dish} to my cart from a top-rated restaurant nearby`);
+  } else {
+    prompts.push('Show my current cart and continue checkout');
+  }
+
+  prompts.push('Show available coupons and apply the best coupon to my cart');
+  prompts.push('Proceed to payment with UPI and generate QR code');
+
+  let lastResponse = null;
+  for (const prompt of prompts) {
+    lastResponse = await sendChatMessage(apiBaseUrl, sessionId, chatId, prompt, history);
+    history.push({ role: 'user', content: prompt });
+    history.push({ role: 'assistant', content: String(lastResponse?.response || '') });
+  }
+
+  return lastResponse;
 }
 
 const server = new McpServer({
@@ -213,6 +315,47 @@ server.registerTool(
       _meta: {
         'openai/outputTemplate': WIDGET_URI,
         'openai/widgetDescription': 'Interactive menu view for selected restaurant.',
+        requestId: randomUUID()
+      }
+    };
+  }
+);
+
+server.registerTool(
+  'zomato_checkout_ui',
+  {
+    title: 'Zomato Checkout (Interactive UI)',
+    description: 'Build cart, apply coupon, and show payment/UPI QR in an interactive checkout widget.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        restaurant: { type: 'string', description: 'Optional restaurant name for checkout context' },
+        dish: { type: 'string', description: 'Optional dish/item to add before checkout' },
+        apiBaseUrl: { type: 'string', description: 'Optional backend base URL, defaults to http://localhost:3000' }
+      }
+    }
+  },
+  async ({ restaurant, dish, apiBaseUrl }) => {
+    const baseUrl = apiBaseUrl || DEFAULT_API_BASE;
+    const finalChatResponse = await buildCheckoutFlow(baseUrl, restaurant, dish);
+    const checkout = pickCheckoutFromChatResponse(finalChatResponse || {});
+
+    return {
+      content: [
+        {
+          type: 'text',
+          text: checkout.payment.qrUrl
+            ? 'Checkout prepared with coupon and UPI QR.'
+            : 'Checkout prepared, but UPI QR was not found in structured response.'
+        }
+      ],
+      structuredContent: {
+        view: 'checkout',
+        ...checkout
+      },
+      _meta: {
+        'openai/outputTemplate': WIDGET_URI,
+        'openai/widgetDescription': 'Interactive checkout view with coupon and UPI QR.',
         requestId: randomUUID()
       }
     };

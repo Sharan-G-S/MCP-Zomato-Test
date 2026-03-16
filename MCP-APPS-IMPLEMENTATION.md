@@ -315,9 +315,14 @@ This server exposes:
 - Returns structured menu items
 - Renders inside the same interactive widget template
 
-3. Resource template
+3. `zomato_checkout_ui`
+- Builds checkout context via multi-step chat flow (add item/cart -> coupons -> payment)
+- Returns structured cart, offers, and payment details
+- Renders checkout UI with coupon chips and large UPI QR block in the host widget
+
+4. Resource template
 - `ui://widget/zomato-interactive.html`
-- Interactive card UI with filters and quick actions
+- Interactive card UI with filters, menu view, and checkout view
 
 ### Run It
 

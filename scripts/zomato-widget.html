@@ -86,6 +86,69 @@
       color: var(--muted);
       font-size: 13px;
     }
+    .checkout-wrap {
+      display: grid;
+      gap: 10px;
+    }
+    .checkout-card {
+      border: 1px solid var(--border);
+      background: var(--card);
+      border-radius: 12px;
+      padding: 12px;
+      display: grid;
+      gap: 8px;
+    }
+    .checkout-title { font-weight: 700; font-size: 14px; }
+    .checkout-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      font-size: 13px;
+    }
+    .offer-chip {
+      display: inline-flex;
+      border: 1px solid var(--border);
+      background: transparent;
+      border-radius: 999px;
+      padding: 5px 9px;
+      font-size: 12px;
+      margin-right: 6px;
+      margin-top: 4px;
+    }
+    .payment-pill {
+      display: inline-flex;
+      width: fit-content;
+      border: 1px solid rgba(226, 55, 68, 0.5);
+      background: var(--accent-soft);
+      border-radius: 999px;
+      padding: 5px 10px;
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .qr-box {
+      border: 1px dashed var(--border);
+      border-radius: 12px;
+      padding: 10px;
+      display: grid;
+      justify-items: center;
+      gap: 8px;
+    }
+    .qr-box img {
+      width: 240px;
+      height: 240px;
+      object-fit: contain;
+      border-radius: 8px;
+      background: #fff;
+      border: 1px solid var(--border);
+    }
+    .checkout-actions {
+      display: flex;
+      width: 100%;
+      gap: 8px;
+    }
+    .checkout-actions .btn {
+      width: 50%;
+    }
   </style>
 </head>
 <body>
@@ -172,8 +235,75 @@
         '</div>';
     }
 
+    function renderCheckout(checkout) {
+      const app = document.getElementById('app');
+      const cart = checkout.cart || {};
+      const payment = checkout.payment || {};
+      const offers = Array.isArray(checkout.offers) ? checkout.offers : [];
+      const items = Array.isArray(cart.items) ? cart.items : [];
+
+      app.innerHTML =
+        '<div class="head">' +
+          '<div class="title">Checkout</div>' +
+          '<div class="muted">Interactive payment view</div>' +
+        '</div>' +
+        '<div class="checkout-wrap">' +
+          '<div class="checkout-card">' +
+            '<div class="checkout-title">Cart Summary</div>' +
+            (items.length
+              ? items.map(function(item) {
+                  return '<div class="checkout-row"><span>' + (item.name || item.item_name || 'Item') + '</span><strong>' + (item.price || item.item_price || 'N/A') + '</strong></div>';
+                }).join('')
+              : '<div class="empty">No cart items found in checkout response.</div>') +
+            '<div class="checkout-row"><span>Total</span><strong>' + (cart.total || payment.amount || 'N/A') + '</strong></div>' +
+          '</div>' +
+          '<div class="checkout-card">' +
+            '<div class="checkout-title">Offers</div>' +
+            (offers.length
+              ? offers.slice(0, 5).map(function(offer) {
+                  const label = offer.code || offer.title || offer.offer_code || offer.name || 'Offer';
+                  return '<span class="offer-chip">' + label + '</span>';
+                }).join('')
+              : '<div class="empty">No coupon data found.</div>') +
+          '</div>' +
+          '<div class="checkout-card">' +
+            '<div class="checkout-title">Payment</div>' +
+            '<span class="payment-pill">' + (payment.method || 'UPI') + '</span>' +
+            (payment.qrUrl
+              ? '<div class="qr-box">' +
+                  '<img src="' + payment.qrUrl + '" alt="UPI QR" />' +
+                  '<div class="checkout-actions">' +
+                    '<button class="btn" id="openQrBtn">Open QR</button>' +
+                    '<button class="btn" id="confirmPaidBtn">I Paid</button>' +
+                  '</div>' +
+                '</div>'
+              : '<div class="empty">UPI QR was not found.</div>') +
+          '</div>' +
+        '</div>';
+
+      const openQrBtn = document.getElementById('openQrBtn');
+      if (openQrBtn) {
+        openQrBtn.addEventListener('click', async function() {
+          if (window.openai && typeof window.openai.emitEvent === 'function') {
+            await window.openai.emitEvent({ type: 'zomato-open-qr', qrUrl: payment.qrUrl || '' });
+          }
+        });
+      }
+
+      const confirmPaidBtn = document.getElementById('confirmPaidBtn');
+      if (confirmPaidBtn) {
+        confirmPaidBtn.addEventListener('click', async function() {
+          if (window.openai && typeof window.openai.emitEvent === 'function') {
+            await window.openai.emitEvent({ type: 'assistant-suggestion', text: 'I have completed payment. Confirm my order.' });
+          }
+        });
+      }
+    }
+
     if (view === 'menu') {
       renderMenu(data);
+    } else if (view === 'checkout') {
+      renderCheckout(data);
     } else {
       renderRestaurants(data.restaurants || []);
     }
